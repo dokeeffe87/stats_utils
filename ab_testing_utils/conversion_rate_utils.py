@@ -24,6 +24,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+import minimum_detectable_effect_size as mdes
 
 from time import gmtime, strftime
 from tqdm import tqdm
@@ -54,10 +55,66 @@ class ConversionExperiment:
         self.df = df
         self.post_hoc = post_hoc
         self.is_experiment_data = is_experiment_data
-        # TODO: Add support for fake data generation options
+        self.generate_fake_data = False
 
-    # TODO: Need to think about how to implement this
-    # def calculate_fpr(self, historical_rate):
+    def plot_fprs(self, fpr_dict, alpha, power):
+        """
+        Function to plot False Positive Risks
+
+        :param fpr_dict: Dictionary output by the calculate_false_positive_risk function is no historical_success_rate is passed
+        :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
+        :param power: The power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
+                      hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
+        :return: Nothing, just makes the plot.
+        """
+
+        x = np.linspace(0.05, 0.5, 100)
+
+        plt.figure(figsize=(20, 10))
+        plt.plot(x, self.calculate_false_positive_risk(alpha=alpha, power=power, historical_success_rate=x), color='blue', linewidth=3)
+
+        for label_, success_rate in fpr_dict.items():
+            plt.plot(success_rate[1], success_rate[0], 'go', markersize=12, label=label_)
+
+        plt.title("False Positive Risk (FPR) as a function of experiment success rate at alpha={0}, beta={1}".format(alpha, 1-power), fontsize=18)
+        plt.xlabel('Historical experiment success rate', fontsize=18)
+        plt.xticks(fontsize=14)
+        plt.ylabel("False Positive Risk", fontsize=18)
+        plt.yticks(fontsize=14)
+        plt.legend()
+        plt.tight_layout()
+        # plt.savefig("FPR.png", facecolor='w')
+
+    def calculate_false_positive_risk(self, alpha, power, historical_success_rate=None):
+        """
+        Calculates the False Positive Risk (or probability that a statistically significant result is a false positive, i.e. the probability that the null
+        hypothesis is true when an experiment was statistically significant)
+
+        :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
+        :param power: The power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
+                      hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
+        :param historical_success_rate: The historical rate at which A/B tests result in a true statistically significant outcome. If not provide, a range of values from the literature will
+                                        be used (see Kohavi, Deng, Vermeer, 2022 for a summary of known industry values)
+        :return: The False Positive Risk: i.e. the probability that the null hypothesis is true when an experiment was observed to be statistically significant
+        """
+
+        if historical_success_rate is not None:
+            pi = 1 - historical_success_rate
+            fpr = alpha * pi / ((alpha * pi) + (power * (1 - pi)))
+
+            return fpr
+
+        else:
+            print('Historical success rate not provided.  Will generate False Positive Risk values for different levels of historical success')
+            historical_success_rate_dict = {'Microsoft': 0.333, 'Bing': 0.15, 'Google Ads or Netflix': 0.1, 'Airbnb': 0.08}
+            possible_fprs = {}
+            for company_name, success_rate in historical_success_rate_dict.items():
+                label_ = 'If our success rate was that of {0}'.format(company_name)
+                pi_ = 1 - success_rate
+                fpr_ = alpha * pi_ / ((alpha * pi_) + (power * (1 - pi_)))
+                possible_fprs[label_] = (fpr_, success_rate)
+
+            self.plot_fprs(fpr_dict=possible_fprs, alpha=alpha, power=power)
 
     @staticmethod
     def calc_delta(baseline_conversion_rate: float, relative_minimum_detectable_effect_size: float) -> float:
