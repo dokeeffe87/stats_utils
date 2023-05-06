@@ -24,7 +24,44 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
-import minimum_detectable_effect_size as mdes
+# import minimum_detectable_effect_size as mdes
+
+from time import gmtime, strftime
+from tqdm import tqdm
+from matplotlib import style
+
+warnings.filterwarnings('ignore')
+
+# set the plot style
+style.use('ggplot')
+
+"""
+
+ _____                               _            ______      _       _   _ _   _ _
+/  __ \                             (_)           | ___ \    | |     | | | | | (_) |
+| /  \/ ___  _ ____   _____ _ __ ___ _  ___  _ __ | |_/ /__ _| |_ ___| | | | |_ _| |___
+| |    / _ \| '_ \ \ / / _ \ '__/ __| |/ _ \| '_ \|    // _` | __/ _ \ | | | __| | / __|
+| \__/\ (_) | | | \ V /  __/ |  \__ \ | (_) | | | | |\ \ (_| | ||  __/ |_| | |_| | \__ \
+ \____/\___/|_| |_|\_/ \___|_|  |___/_|\___/|_| |_\_| \_\__,_|\__\___|\___/ \__|_|_|___/
+
+
+A collection of utility functions for analysis of AB tests with conversion rate metrics
+
+Author: Dan (okeeffed090@gmail.com)
+
+V1.0.0
+"""
+
+# Import modules
+import os
+import sys
+import numpy as np
+import pandas as pd
+import scipy.stats as stats
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+# import minimum_detectable_effect_size as mdes
 
 from time import gmtime, strftime
 from tqdm import tqdm
@@ -51,6 +88,7 @@ class ConversionExperiment:
     ---------
     Fill this in later
     """
+
     def __init__(self, df: pd.DataFrame, post_hoc: bool = True, is_experiment_data: bool = True):
         self.df = df
         self.post_hoc = post_hoc
@@ -61,7 +99,7 @@ class ConversionExperiment:
         """
         Function to plot False Positive Risks
 
-        :param fpr_dict: Dictionary output by the calculate_false_positive_risk function is no historical_success_rate is passed
+        :param fpr_dict: Dictionary output by the calculate_false_positive_risk function if no historical_success_rate is passed
         :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
         :param power: The power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
                       hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
@@ -72,11 +110,13 @@ class ConversionExperiment:
 
         plt.figure(figsize=(20, 10))
         plt.plot(x, self.calculate_false_positive_risk(alpha=alpha, power=power, historical_success_rate=x), color='blue', linewidth=3)
-
+        markers_ = ['go', 'rD', 'mH', 'kv']
+        i = 0
         for label_, success_rate in fpr_dict.items():
-            plt.plot(success_rate[1], success_rate[0], 'go', markersize=12, label=label_)
+            plt.plot(success_rate[1], success_rate[0], markers_[i], markersize=12, label=label_)
+            i += 1
 
-        plt.title("False Positive Risk (FPR) as a function of experiment success rate at alpha={0}, beta={1}".format(alpha, 1-power), fontsize=18)
+        plt.title("False Positive Risk (FPR) as a function of experiment success rate at alpha={0}, beta={1}".format(alpha, 1 - power), fontsize=18)
         plt.xlabel('Historical experiment success rate', fontsize=18)
         plt.xticks(fontsize=14)
         plt.ylabel("False Positive Risk", fontsize=18)
@@ -164,7 +204,7 @@ class ConversionExperiment:
         if sigma is None:
             sigma = self.calc_sigma(baseline_conversion_rate=baseline_conversion_rate)
 
-        se_ = sigma * np.sqrt(2/sample_size)
+        se_ = sigma * np.sqrt(2 / sample_size)
 
         return se_
 
@@ -184,12 +224,12 @@ class ConversionExperiment:
         sigma_squared = self.calc_sigma(baseline_conversion_rate=baseline_conversion_rate, return_square=True)
         delta_ = self.calc_delta(baseline_conversion_rate=baseline_conversion_rate, relative_minimum_detectable_effect_size=relative_minimum_detectable_effect_size)
 
-        z_alpha = stats.norm.ppf(1 - (alpha/2))
+        z_alpha = stats.norm.ppf(1 - (alpha / 2))
         z_power = stats.norm.ppf(power)
 
-        n = 2 * (sigma_squared * (z_power + z_alpha)**2)/(delta_**2)
+        n = 2 * (sigma_squared * (z_power + z_alpha) ** 2) / (delta_ ** 2)
 
-        return n
+        return int(np.round(n))
 
     def calc_experiment_power(self, sample_size: float, alpha: float, relative_minimum_detectable_effect_size: float, baseline_conversion_rate: float, p_value: float = None) -> float:
         """
@@ -210,10 +250,13 @@ class ConversionExperiment:
         se_ = self.calc_standard_error(sample_size=sample_size, baseline_conversion_rate=baseline_conversion_rate)
 
         z_value = stats.norm.ppf(1 - (alpha / 2))
-        v_ = (delta_/se_) - z_value
+        v_ = (delta_ / se_) - z_value
 
         power_ = stats.norm.cdf(x=v_)
 
         return power_
+
+
+
 
 
