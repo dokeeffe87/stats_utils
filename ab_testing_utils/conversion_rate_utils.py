@@ -24,6 +24,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+import matplotlib.ticker as mtick
 # import minimum_detectable_effect_size as mdes
 
 from time import gmtime, strftime
@@ -33,43 +34,7 @@ from matplotlib import style
 warnings.filterwarnings('ignore')
 
 # set the plot style
-style.use('ggplot')
-
-"""
-
- _____                               _            ______      _       _   _ _   _ _
-/  __ \                             (_)           | ___ \    | |     | | | | | (_) |
-| /  \/ ___  _ ____   _____ _ __ ___ _  ___  _ __ | |_/ /__ _| |_ ___| | | | |_ _| |___
-| |    / _ \| '_ \ \ / / _ \ '__/ __| |/ _ \| '_ \|    // _` | __/ _ \ | | | __| | / __|
-| \__/\ (_) | | | \ V /  __/ |  \__ \ | (_) | | | | |\ \ (_| | ||  __/ |_| | |_| | \__ \
- \____/\___/|_| |_|\_/ \___|_|  |___/_|\___/|_| |_\_| \_\__,_|\__\___|\___/ \__|_|_|___/
-
-
-A collection of utility functions for analysis of AB tests with conversion rate metrics
-
-Author: Dan (okeeffed090@gmail.com)
-
-V1.0.0
-"""
-
-# Import modules
-import os
-import sys
-import numpy as np
-import pandas as pd
-import scipy.stats as stats
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-# import minimum_detectable_effect_size as mdes
-
-from time import gmtime, strftime
-from tqdm import tqdm
-
-warnings.filterwarnings('ignore')
-
-# set the plot style
-sns.set()
+style.use('fivethirtyeight')
 
 
 class ConversionExperiment:
@@ -80,19 +45,13 @@ class ConversionExperiment:
 
     Parameters
     -----------
-    df: Optional Pandas Dataframe with input data, either historical observations, or actual experimental data. If None, will generate a fake dataset (We need to add parameters to control this)
-    post_hoc: Boolean. If True, you want to do a post_hoc analysis of data
-    is_experiment_data: Boolean. If True, the data represents actual experimental data.
 
     Examples
     ---------
     Fill this in later
     """
 
-    def __init__(self, df: pd.DataFrame, post_hoc: bool = True, is_experiment_data: bool = True):
-        self.df = df
-        self.post_hoc = post_hoc
-        self.is_experiment_data = is_experiment_data
+    def __init__(self):
         self.generate_fake_data = False
 
     def plot_fprs(self, fpr_dict, alpha, power):
@@ -256,7 +215,166 @@ class ConversionExperiment:
 
         return power_
 
+    @staticmethod
+    def round_and_convert_to_int_columns(df_: pd.DataFrame, col_name: str) -> pd.DataFrame:
+        """
+        Function to format input column from DataFrame df_.  This will round numerical values and convert to integer. For experiment runtime columns, the values will be rounded up
+        to the nearest integer as runtime estimates should be conservative. Caution: This will modify the input DataFrame inplace.
+
+        :param df_: DataFrame with the column you want to format
+        :param col_name: The name of the column to format
+        :return: The original DataFrame with the input column now formatted.
+        """
+
+        if col_name in ['monthly_additional_conversions_upper', 'monthly_additional_conversions_lower']:
+            df_[col_name] = np.round(df_[col_name])
+            df_[col_name] = df_[col_name].astype(int)
+        else:
+            df_[col_name] = np.ceil(df_[col_name])
+            df_[col_name] = df_[col_name].astype(int)
+
+        return df_
+
+    def create_mde_table(self, monthly_num_obs: int, baseline_conversion_rate: float, n_variants: int = 2, alpha: float = 0.05, power: float = 0.8) -> pd.DataFrame:
+        """
+        Function to generate a minimum detectable effect size table.  The idea here is to produce a DataFrame which matches minimum detectable effect sizes with required sample
+        sizes, at the desired level of confidence and power.  Coupled with the expected monthly number of observations, this will provide an estimate for experiment runtime vs the
+        size of the effect the experiment can detect.  One assumption is that the expected daily number of observations is the monthly value supplied divided by 30. It's
+        important to make sure that the monthly expected number of observations is accurate, or less the experiment runtimes could be unrealistic
+
+        :param monthly_num_obs: The expected number of observations (i.e. merchants, view, whatever the experimental unit is) seen in a 30 day period
+        :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
+        :param n_variants: The number of variants you want to use in your test.  Usually this is two (control and exposure), but you can add any integer number here if you really
+                           want to.  Be very careful when proposing multi-variant experiments! Be sure to consult with a data scientist first. Multi-variant experiments can be
+                           tricky, and are prone to multiple hypothesis testing bias.
+        :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
+        :param power: The desired power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
+                      hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
+        :return: A DataFrame with a range of different experiment runtimes, the required sample size and the magnitude of the effect that can be measured, given the supplied level
+                 of confidence and power
+        """
+
+        mde_range = np.arange(0.001, 2.001, 0.001)
+
+        sample_sizes = [self.calc_sample_size(power=power,
+                                              alpha=alpha,
+                                              relative_minimum_detectable_effect_size=mde,
+                                              baseline_conversion_rate=baseline_conversion_rate) * n_variants for mde in mde_range
+                        ]
+
+        new_conversion_rates_upper = [baseline_conversion_rate + self.calc_delta(baseline_conversion_rate=baseline_conversion_rate,
+                                                                                 relative_minimum_detectable_effect_size=mde) for mde in mde_range
+                                      ]
+
+        new_conversion_rates_lower = [baseline_conversion_rate - self.calc_delta(baseline_conversion_rate=baseline_conversion_rate,
+                                                                                 relative_minimum_detectable_effect_size=mde) for mde in mde_range
+                                      ]
+
+        df_ = pd.DataFrame()
+        df_['mde'] = mde_range
+        df_['new_conversion_rate_upper_bound'] = new_conversion_rates_upper
+        df_['new_conversion_rate_lower_bound'] = new_conversion_rates_lower
+        df_['total_sample_size'] = sample_sizes
+        df_['sample_size_per_variant'] = np.array(sample_sizes) / n_variants
+        df_['days'] = df_['total_sample_size'] / (monthly_num_obs / 30)
+        df_['weeks'] = df_['days'] / 7
+        df_['monthly_additional_conversions_upper'] = (df_['new_conversion_rate_upper_bound'] * monthly_num_obs) - (baseline_conversion_rate * monthly_num_obs)
+        df_['monthly_additional_conversions_lower'] = (df_['new_conversion_rate_lower_bound'] * monthly_num_obs) - (baseline_conversion_rate * monthly_num_obs)
+
+        for col_ in ['total_sample_size', 'sample_size_per_variant', 'days', 'weeks', 'monthly_additional_conversions_upper', 'monthly_additional_conversions_lower']:
+            df_ = self.round_and_convert_to_int_columns(df_=df_, col_name=col_)
+
+        return df_
+
+    @staticmethod
+    def format_y_axis(x: float, pos) -> str:
+        """
+        Helper function to format the y-axis of the MDE vs runtime plot.
+
+        :param x: A number used as a tick on a matplotlib plot that you want to format
+        :param pos: This is a position indicator used internally by matplotlib to figure out where to plot the tick. You should never have to interact with it directly.
+        :return: The formatted tick mark
+        """
+
+        return f"{int(x):,}"
 
 
+    @staticmethod
+    def plot_mde_marker(df, weeks, days, ax):
+        """
 
+        :param df:
+        :param weeks:
+        :param days:
+        :param ax:
+        :return:
+        """
 
+        ax.axhline(y=days, linestyle='--', xmax=(df[df['days'] <= days]['mde'].min() - ax.get_xlim()[0]) / ax.get_xlim()[1] - 0.005)
+
+        if weeks > 1:
+            week_text = 'weeks'
+        else:
+            week_text = 'week'
+
+        ax.text(ax.get_xlim()[0], days + 1, f"{weeks} {week_text}", horizontalalignment='left')
+
+        mde_text = "MDE = {0}%:\nConversion rates between {1}% and {2}% will not be distinguishable from baseline".format(np.round(df[df['weeks'] == weeks]['mde'].min() * 100, 3),
+                                                                                                                          np.round(df[df['weeks'] == weeks]['new_conversion_rate_lower_bound'].min() * 100, 3),
+                                                                                                                          np.round(df[df['weeks'] == weeks]['new_conversion_rate_upper_bound'].min() * 100, 3))
+
+        ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
+
+    def make_mde_plot(self, df_, min_weeks, max_weeks):
+        """
+
+        :param df_:
+        :param min_weeks:
+        :param max_weeks:
+        :return:
+        """
+        fig, ax = plt.subplots(figsize=(12, 8))
+        df_temp = df_.copy()
+
+        # This should remove the necessity of calculating all these mins below...
+        df_temp = df_temp[['mde', 'days', 'weeks', 'new_conversion_rate_upper_bound', 'new_conversion_rate_lower_bound']].loc[(df_temp.groupby('weeks')['days'].idxmax())]
+
+        ax.plot("mde",
+                "days",
+                data=df_temp.loc[(df_temp['weeks'] >= min_weeks) & (df_temp['weeks'] <= max_weeks)],
+                linewidth=2,
+                solid_capstyle="round",
+                linestyle='--',
+                marker='o',
+                color='b'
+        )
+
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(self.format_y_axis))
+        ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+        ax.set_xlabel('Minimum detectable effect size')
+        ax.set_ylabel('')
+
+        # Set limit to reasonable amount of time
+        if ax.get_ylim()[1] > 60:
+            ax.set_ylim([0, 7 * max_weeks * 1.2])
+
+        # Set x-lim
+        x_limit = df_temp[df_temp["weeks"] <= min_weeks]["mde"].min() * 1.2
+        x_min = df_temp[df_temp['weeks']==max_weeks]['mde'].min()
+        x_min = x_min - 0.1 * x_min
+        ax.set_xlim([x_min, x_limit])
+
+        for weeks in range(min_weeks, max_weeks + 1):
+            days_ = df_temp.query('weeks == {0}'.format(weeks))['days'].min()
+            self.plot_mde_marker(df=df_temp, weeks=weeks, days=days_, ax=ax)
+
+        ax.set_title('Experiment run times by minimum detectable effect size', fontsize=20)
+
+        # We don't need the y-axis here
+        ax.axes.get_yaxis().set_visible(False)
+
+        ax.yaxis.grid(True)
+        ax.spines["left"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
