@@ -342,7 +342,7 @@ class ConversionExperiment:
         :return: Nothing. Generates a plot of the minimum detectable effect sizes vs the number of required weeks at the desired level of significance and power
         """
 
-        current_time = current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
         fig, ax = plt.subplots(figsize=(12, 8))
         df_temp = df_.copy()
