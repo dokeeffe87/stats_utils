@@ -240,7 +240,10 @@ class ConversionExperiment:
         Function to generate a minimum detectable effect size table.  The idea here is to produce a DataFrame which matches minimum detectable effect sizes with required sample
         sizes, at the desired level of confidence and power.  Coupled with the expected monthly number of observations, this will provide an estimate for experiment runtime vs the
         size of the effect the experiment can detect.  One assumption is that the expected daily number of observations is the monthly value supplied divided by 30. It's
-        important to make sure that the monthly expected number of observations is accurate, or less the experiment runtimes could be unrealistic
+        important to make sure that the monthly expected number of observations is accurate, or less the experiment runtimes could be unrealistic. Also note, ths simplified
+        approach assumes that the standard deviation between control and variants is the same. Furthermore, if you use more than 2 variants, note that this can only recommend
+        designs which split the population evenly amongst all variants.  For example, if you request 3 variants, the design assumes the population will be split as 1/3 in control
+        1/3 in variant A and the remaining 1/3 in variant B.
 
         :param monthly_num_obs: The expected number of observations (i.e. merchants, view, whatever the experimental unit is) seen in a 30 day period
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
@@ -298,12 +301,12 @@ class ConversionExperiment:
 
         return f"{int(x):,}"
 
-
     @staticmethod
-    def plot_mde_marker(df, weeks, days, ax):
+    def plot_mde_marker(df: pd.DataFrame, weeks: int, days: int, ax):
         """
-        Function to format the minimum detectable effect size plot.  This will add horizontal lines to indicate the required number of weeks, as well as annotate the plot to indicate the minimum d
-        etectable effect size along with the range of effect sizes that will not be detectable by the experiment at the desired level of significance and power.
+        Function to format the minimum detectable effect size plot.  This will add horizontal lines to indicate the required number of weeks, as well as annotate the plot to
+        indicate the minimum detectable effect size along with the range of effect sizes that will not be detectable by the experiment at the desired level of significance and
+        power.
 
         :param df: A DataFrame with experimental runtime and minimum detectable effect sizes.  This should be the output of the create_mde_table method.
         :param weeks: The number of weeks for one particular instance of the experiment, at a given level of significance, power, and effect size
@@ -327,7 +330,7 @@ class ConversionExperiment:
 
         ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
 
-    def make_mde_plot(self, df_, min_weeks, max_weeks, save_path=None, output_filename=None):
+    def make_mde_plot(self, df_: pd.DataFrame, min_weeks: int, max_weeks: int, save_path: str = None, output_filename: str = None, figsize: tuple = (12, 8)):
         """
         Function to make a plot of the minimum detectable effect sizes by experiment run time in weeks.  This is plot the number of required weeks (conservatively) against the minimum (conservatively)
         effect size detectable at the required power and significance levels
@@ -339,12 +342,13 @@ class ConversionExperiment:
                           is longer than the cost justifies, reconsider running an experiment in the first place
         :param save_path: Path to save the plot to. If None, the file will be saved to the current working directory.
         :param output_filename: Optional str name for the file where the plot will be saved. If None, the file will be called experiment_runtime_vs_mde_CURRENT_TIME.png
+        :param figsize: Tuple: sets the figsize argument in matplotlib.subplot()
         :return: Nothing. Generates a plot of the minimum detectable effect sizes vs the number of required weeks at the desired level of significance and power
         """
 
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
-        fig, ax = plt.subplots(figsize=(12, 8))
+        fig, ax = plt.subplots(figsize=figsize)
         df_temp = df_.copy()
 
         # This should remove the necessity of calculating all these mins below...
@@ -366,11 +370,7 @@ class ConversionExperiment:
         ax.set_xlabel('Minimum detectable effect size')
         ax.set_ylabel('')
 
-        # Set limit to reasonable amount of time
-        if ax.get_ylim()[1] > 60:
-            ax.set_ylim([0, 7 * max_weeks * 1.2])
-
-        # Set x-lim
+        # Set the x axis limit
         x_limit = df_temp[df_temp["weeks"] <= min_weeks]["mde"].min() * 1.2
         x_min = df_temp[df_temp['weeks'] == max_weeks]['mde'].min()
         x_min = x_min - 0.1 * x_min
@@ -403,3 +403,82 @@ class ConversionExperiment:
 
         save_path = os.path.join(save_path, file_name)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    @staticmethod
+    def calculate_critical_values_for_ci(se: float, alpha: float) -> float:
+        """
+        Helper function to calculate the critical values for confidence interval estimation, given a significance level alpha
+
+        :param se: Standard error. This should come from the simple_ab_test function
+        :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
+        :return: The critical value for the given standard error and desired level of significance
+        """
+
+        critical_value = - se * stats.norm.ppf(alpha/2)
+
+        return critical_value
+
+    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float) -> pd.DataFrame:
+        """
+        Simple function to compare the outcomes in an A/B experiment (i.e. 2 variants).  This just compares the means of the control and treatment groups, modeled as the difference
+        between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha.
+
+        :param df: DataFrame which contains the experiment results. There should be a column with the actual outcome variable, and a column indicating which group the observation
+                   is from.
+        :param group_column_name: Name of the column which contains the group assignments
+        :param treatment_name: The name of the treatment group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
+                               the control
+        :param outcome_column: The name of the column containing the measured outcome variable
+        :param alpha: The significance level of the test
+        :param null_hypothesis: The null difference we are testing against. Usually this is zero; i.e. the null hypothesis is that the difference in means between control and
+                                treatment groups is zero. This doesn't have to be the case, and you can specify a different value of this difference if you want.
+        :return: A DataFrame with the A/B test results. Namely, the observed means in both control and treatment (along with confidence intervals), as well as the difference in
+        means, its confidence interval, the measured Z statistic, and the p-value.
+        """
+
+        df_stats = df.groupby(group_column_name).describe()
+
+        # group means
+        mu_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'mean')]
+        mu_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'mean')]
+
+        # group standard deviations
+        std_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'std')]
+        std_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'std')]
+
+        # group sample sizes
+        count_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'count')]
+        count_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'count')]
+
+        # Compute standard errors
+        se_treatment = std_treatment / np.sqrt(count_treatment)
+        se_control = std_control / np.sqrt(count_control)
+
+        # Compute effect size:
+        diff_ = mu_treatment - mu_control
+
+        # Compute standard error for difference in treatment and control distributions
+        se_diff_ = np.sqrt(((std_treatment**2) / count_treatment) + ((std_control**2) / count_control))
+
+        z_statistic = (diff_ - null_hypothesis) / se_diff_
+        p_value = stats.norm.cdf(z_statistic)
+
+        df_results = pd.DataFrame()
+        df_results[treatment_name + '_mean'] = mu_treatment
+        df_results[treatment_name + '_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = mu_treatment - self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
+        df_results[treatment_name + '_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = mu_treatment + self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
+
+        df_results['control_mean'] = mu_control
+        df_results['control_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = mu_control - self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)
+        df_results['control_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = mu_control + self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)
+
+        df_results['treatment_minus_control_mean'] = diff_
+        df_results['treatment_minus_control_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = diff_ - self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)
+        df_results['treatment_minus_control_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = diff_ + self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)
+
+        df_results['z_statistic'] = z_statistic
+        df_results['p_value'] = p_value
+
+        return df_results
+
+
