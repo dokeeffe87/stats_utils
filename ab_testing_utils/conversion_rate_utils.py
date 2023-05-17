@@ -281,6 +281,8 @@ class ConversionExperiment:
         df_['sample_size_per_variant'] = np.array(sample_sizes) / n_variants
         df_['days'] = df_['total_sample_size'] / (monthly_num_obs / 30)
         df_['weeks'] = df_['days'] / 7
+        df_['weeks_non_rounded'] = df_['days'] / 7
+        df_['fraction_of_expected_monthly_sample'] = df_['total_sample_size'] / monthly_num_obs
         df_['monthly_additional_conversions_upper'] = (df_['new_conversion_rate_upper_bound'] * monthly_num_obs) - (baseline_conversion_rate * monthly_num_obs)
         df_['monthly_additional_conversions_lower'] = (df_['new_conversion_rate_lower_bound'] * monthly_num_obs) - (baseline_conversion_rate * monthly_num_obs)
 
@@ -330,7 +332,7 @@ class ConversionExperiment:
 
         ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
 
-    def make_mde_plot(self, df_: pd.DataFrame, min_weeks: int, max_weeks: int, save_path: str = None, output_filename: str = None, figsize: tuple = (12, 8)):
+    def make_mde_plot(self, df_: pd.DataFrame, min_weeks: int, max_weeks: int, save_path: str = None, output_filename: str = None, conservative_runtime: bool = False, figsize: tuple = (12, 8)):
         """
         Function to make a plot of the minimum detectable effect sizes by experiment run time in weeks.  This is plot the number of required weeks (conservatively) against the minimum (conservatively)
         effect size detectable at the required power and significance levels
@@ -342,6 +344,9 @@ class ConversionExperiment:
                           is longer than the cost justifies, reconsider running an experiment in the first place
         :param save_path: Path to save the plot to. If None, the file will be saved to the current working directory.
         :param output_filename: Optional str name for the file where the plot will be saved. If None, the file will be called experiment_runtime_vs_mde_CURRENT_TIME.png
+        :param conservative_runtime: Boolean. If True, will select the max of the minimum detectable effect size. This means it will pick the MDE for the shortest number of days \
+                                     per number of weeks. For example, if 4 weeks, will select the max MDE associated with a 22 days experiment runtime. Use this if your underlying
+                                     population and baseline conversion rates are estimated from high variable data.
         :param figsize: Tuple: sets the figsize argument in matplotlib.subplot()
         :return: Nothing. Generates a plot of the minimum detectable effect sizes vs the number of required weeks at the desired level of significance and power
         """
@@ -352,7 +357,12 @@ class ConversionExperiment:
         df_temp = df_.copy()
 
         # This should remove the necessity of calculating all these mins below...
-        df_temp = df_temp[['mde', 'days', 'weeks', 'new_conversion_rate_upper_bound', 'new_conversion_rate_lower_bound']].loc[(df_temp.groupby('weeks')['days'].idxmax())]
+        if conservative_runtime:
+            df_temp = df_temp[['mde', 'days', 'weeks', 'new_conversion_rate_upper_bound', 'new_conversion_rate_lower_bound']].loc[(df_temp.groupby('weeks')['weeks_non_rounded'].idxmin())]
+        else:
+            # Be careful with this setting. This could select experimental run times which are borderline almost exactly equal to the expected monthly observations.
+            # If your expected observation number is coming from high variability data, this could result in an unachievable sample size in the suggested number of weeks.
+            df_temp = df_temp[['mde', 'days', 'weeks', 'new_conversion_rate_upper_bound', 'new_conversion_rate_lower_bound']].loc[(df_temp.groupby('weeks')['weeks_non_rounded'].idxmax())]
 
         ax.plot("mde",
                 "days",
@@ -362,7 +372,7 @@ class ConversionExperiment:
                 linestyle='--',
                 marker='o',
                 color='b'
-        )
+                )
 
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(self.format_y_axis))
         ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
@@ -370,7 +380,7 @@ class ConversionExperiment:
         ax.set_xlabel('Minimum detectable effect size')
         ax.set_ylabel('')
 
-        # Set the x axis limit
+        # Set the x-axis limit
         x_limit = df_temp[df_temp["weeks"] <= min_weeks]["mde"].min() * 1.2
         x_min = df_temp[df_temp['weeks'] == max_weeks]['mde'].min()
         x_min = x_min - 0.1 * x_min
