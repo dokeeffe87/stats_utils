@@ -447,18 +447,19 @@ class ConversionExperiment:
         """
 
         df_stats = df.groupby(group_column_name).describe()
+        df_stats.columns = ['_'.join(col).strip().strip('_') for col in df_stats.columns.values]
 
         # group means
-        mu_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'mean')]
-        mu_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'mean')]
+        mu_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_mean'].values[0]
+        mu_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_mean'].values[0]
 
         # group standard deviations
-        std_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'std')]
-        std_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'std')]
+        std_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_std'].values[0]
+        std_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_std'].values[0]
 
         # group sample sizes
-        count_treatment = df_stats.query("group_column_name == @treatment_name")[(outcome_column, 'count')]
-        count_control = df_stats.query("group_column_name != @treatment_name")[(outcome_column, 'count')]
+        count_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_count'].values[0]
+        count_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_count'].values[0]
 
         # Compute standard errors
         se_treatment = std_treatment / np.sqrt(count_treatment)
@@ -474,6 +475,7 @@ class ConversionExperiment:
         p_value = stats.norm.cdf(z_statistic)
 
         df_results = pd.DataFrame()
+        print(mu_treatment)
         df_results[treatment_name + '_mean'] = mu_treatment
         df_results[treatment_name + '_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = mu_treatment - self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
         df_results[treatment_name + '_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = mu_treatment + self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
