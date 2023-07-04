@@ -475,21 +475,20 @@ class ConversionExperiment:
         p_value = stats.norm.cdf(z_statistic)
 
         df_results = pd.DataFrame()
-        print(mu_treatment)
-        df_results[treatment_name + '_mean'] = mu_treatment
-        df_results[treatment_name + '_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = mu_treatment - self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
-        df_results[treatment_name + '_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = mu_treatment + self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)
+        df_results[treatment_name + '_mean'] = [mu_treatment]
+        df_results[treatment_name + '_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = [mu_treatment - self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)]
+        df_results[treatment_name + '_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = [mu_treatment + self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)]
 
-        df_results['control_mean'] = mu_control
-        df_results['control_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = mu_control - self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)
-        df_results['control_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = mu_control + self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)
+        df_results['control_mean'] = [mu_control]
+        df_results['control_confidence_interval_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = [mu_control - self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
+        df_results['control_confidence_interval_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = [mu_control + self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
 
-        df_results['treatment_minus_control_mean'] = diff_
-        df_results['treatment_minus_control_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = diff_ - self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)
-        df_results['treatment_minus_control_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = diff_ + self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)
+        df_results['treatment_minus_control_mean'] = [diff_]
+        df_results['treatment_minus_control_{0}_percent_lower'.format(np.round((1 - alpha)*100), 2)] = [diff_ - self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
+        df_results['treatment_minus_control_{0}_percent_upper'.format(np.round((1 - alpha)*100), 2)] = [diff_ + self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
 
-        df_results['z_statistic'] = z_statistic
-        df_results['p_value'] = p_value
+        df_results['z_statistic'] = [z_statistic]
+        df_results['p_value'] = [p_value]
 
         return df_results
 
