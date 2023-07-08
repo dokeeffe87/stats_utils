@@ -428,10 +428,11 @@ class ConversionExperiment:
 
         return critical_value
 
-    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float) -> pd.DataFrame:
+    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative='two_sided') -> pd.DataFrame:
         """
         Simple function to compare the outcomes in an A/B experiment (i.e. 2 variants).  This just compares the means of the control and treatment groups, modeled as the difference
-        between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha.
+        between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha. This is nominally a test on proportions
+        (e.g. conversion rates) for two independent samples. If you have less than 30 samples, don't use this.
 
         :param df: DataFrame which contains the experiment results. There should be a column with the actual outcome variable, and a column indicating which group the observation
                    is from.
@@ -442,9 +443,16 @@ class ConversionExperiment:
         :param alpha: The significance level of the test
         :param null_hypothesis: The null difference we are testing against. Usually this is zero; i.e. the null hypothesis is that the difference in means between control and
                                 treatment groups is zero. This doesn't have to be the case, and you can specify a different value of this difference if you want.
+        :param alternative: The alternative hypothesis.  Can be two-sided, larger, or smaller. If two-sided tests mean_treatment not equal to mean_control.
+                            larger means mean_treatment >= mean_control, and smaller means mean_treatment <= mean_control. All the means hare are assumed to be proportions.
+
         :return: A DataFrame with the A/B test results. Namely, the observed means in both control and treatment (along with confidence intervals), as well as the difference in
         means, its confidence interval, the measured Z statistic, and the p-value.
         """
+
+        alternatives_ = ['two_sided', 'larger', 'smaller']
+
+        assert alternative in alternatives_, "{0} is not a valid alternative. Accepted values are {1}".format(alternative, alternatives_)
 
         df_stats = df.groupby(group_column_name).describe()
         df_stats.columns = ['_'.join(col).strip().strip('_') for col in df_stats.columns.values]
@@ -472,7 +480,13 @@ class ConversionExperiment:
         se_diff_ = np.sqrt(((std_treatment**2) / count_treatment) + ((std_control**2) / count_control))
 
         z_statistic = (diff_ - null_hypothesis) / se_diff_
-        p_value = stats.norm.cdf(z_statistic)
+
+        if alternative == 'two_sided':
+            p_value = 2 * stats.norm.cdf(-np.abs(z_statistic))
+        elif alternative == 'larger':
+            p_value = stats.norm.cdf(-z_statistic)
+        else:
+            p_value = stats.norm.cdf(z_statistic)
 
         df_results = pd.DataFrame()
         df_results[treatment_name + '_mean'] = [mu_treatment]
@@ -489,6 +503,9 @@ class ConversionExperiment:
 
         df_results['z_statistic'] = [z_statistic]
         df_results['p_value'] = [p_value]
+
+        df_results = df_results.T
+        df_results.columns = ["value"]
 
         return df_results
 
