@@ -21,6 +21,7 @@ import sys
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
@@ -62,6 +63,7 @@ class ConversionExperiment:
         :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
         :param power: The power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
                       hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
+
         :return: Nothing, just makes the plot.
         """
 
@@ -94,6 +96,7 @@ class ConversionExperiment:
                       hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
         :param historical_success_rate: The historical rate at which A/B tests result in a true statistically significant outcome. If not provide, a range of values from the literature will
                                         be used (see Kohavi, Deng, Vermeer, 2022 for a summary of known industry values)
+
         :return: The False Positive Risk: i.e. the probability that the null hypothesis is true when an experiment was observed to be statistically significant
         """
 
@@ -123,6 +126,7 @@ class ConversionExperiment:
 
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
         :param relative_minimum_detectable_effect_size: The minimum relative percent change in the underlying metric desired to be detected by the experiment
+
         :return: delta
         """
 
@@ -138,6 +142,7 @@ class ConversionExperiment:
 
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
         :param return_square: If True, returns the variance (sigma squared), if False returns the standard deviation (square root of sigma)
+
         :return: Either the variance or standard deviation of the underlying conversion variable
         """
 
@@ -155,6 +160,7 @@ class ConversionExperiment:
         :param sample_size: The sample size determined to be needed for the experiment (this is the per-group sample size, so total sample size is twice this value)
         :param sigma: The standard deviation of the underlying conversion variable
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
+
         :return: The standard error of the conversion metric
         """
 
@@ -177,6 +183,7 @@ class ConversionExperiment:
         :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
         :param relative_minimum_detectable_effect_size: The minimum relative percent change in the underlying metric desired to be detected by the experiment
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
+
         :return: The sample size required for the experiment. This is the per variant sample size, so the total sample size is twice this number
         """
 
@@ -201,6 +208,7 @@ class ConversionExperiment:
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
         :param p_value: Observed p-value from concluded experiment. Include this only if you want to compute post-hoc power. WARNING: THIS IS AN UNRELIABLE MEASURE OF YOUR EXPERIMENTS RESULTS (See
         Kohavi, Deng, Vermeer, 2022).
+
         :return: The power of the test
         """
         # TODO: Add p_value functionality
@@ -223,6 +231,7 @@ class ConversionExperiment:
 
         :param df_: DataFrame with the column you want to format
         :param col_name: The name of the column to format
+
         :return: The original DataFrame with the input column now formatted.
         """
 
@@ -253,6 +262,7 @@ class ConversionExperiment:
         :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
         :param power: The desired power of the experiment (1 - beta): the probability of detecting a meaningful difference between variants when there really is one. i.e. rejecting the null
                       hypothesis when there is a true difference of delta = baseline_conversion_rate * relative_minimum_detectable_effect_size
+
         :return: A DataFrame with a range of different experiment runtimes, the required sample size and the magnitude of the effect that can be measured, given the supplied level
                  of confidence and power
         """
@@ -298,6 +308,7 @@ class ConversionExperiment:
 
         :param x: A number used as a tick on a matplotlib plot that you want to format
         :param pos: This is a position indicator used internally by matplotlib to figure out where to plot the tick. You should never have to interact with it directly.
+
         :return: The formatted tick mark
         """
 
@@ -314,6 +325,7 @@ class ConversionExperiment:
         :param weeks: The number of weeks for one particular instance of the experiment, at a given level of significance, power, and effect size
         :param days: The number of days for one particular instance of the experiment, at a given level of significance, power, and effect size
         :param ax: The matplotlib ax object for the overall plot. Generated by the make_mde_plot function
+
         :return: Nothing. Just adds formatting to the existing plot object
         """
 
@@ -348,6 +360,7 @@ class ConversionExperiment:
                                      per number of weeks. For example, if 4 weeks, will select the max MDE associated with a 22 days experiment runtime. Use this if your underlying
                                      population and baseline conversion rates are estimated from high variable data.
         :param figsize: Tuple: sets the figsize argument in matplotlib.subplot()
+
         :return: Nothing. Generates a plot of the minimum detectable effect sizes vs the number of required weeks at the desired level of significance and power
         """
 
@@ -421,6 +434,7 @@ class ConversionExperiment:
 
         :param se: Standard error. This should come from the simple_ab_test function
         :param alpha: The significance level of the test (i.e. p-value threshold for declaring significance)
+
         :return: The critical value for the given standard error and desired level of significance
         """
 
@@ -509,4 +523,97 @@ class ConversionExperiment:
 
         return df_results
 
+    @staticmethod
+    def add_interval(ax, xdata, ydata, caps="  ", color='blue', label='control'):
+        """
+        Function to add and format the intervals for plotting the 95% confidence intervals in the method plot_ab_test_results
 
+        :param ax: The matplotlib ax object to draw the lines on
+        :param xdata: List of the lower and upper values of the 95% confidence interval
+        :param ydata: List of the y locations to plot the confidence interval line
+        :param caps: The style of the caps used to denote the lower and upper limits of the 95% confidence interval
+        :param color: The color of the line and caps
+        :param label: The label to describe the line
+
+        :return: The line drawn at constant y between the lower and upper limits of the 95% confidence interval, and the annotated caps marking their positions
+        """
+
+        line = ax.add_line(mpl.lines.Line2D(xdata, ydata, color=color))
+        anno_args = {
+            'ha': 'center',
+            'va': 'center',
+            'size': 24,
+            'color': line.get_color()
+        }
+        a0 = ax.annotate(caps[0], xy=(xdata[0], ydata[0]), **anno_args)
+        a1 = ax.annotate(caps[1], xy=(xdata[-1], ydata[-1]), **anno_args)
+        line.set_label(label)
+
+        return (line, (a0, a1))
+
+    def plot_ab_test_results(self, df: pd.DataFrame, save_path: str = None, output_filename: str = None):
+        """
+        Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their 95% confidence intervals.
+        :param df: Input DataFrame with the results of the AB test. Should be the output of the method simple_ab_test
+        :param save_path: Path to save the plot to. If None, the file will be saved to the current working directory.
+        :param output_filename: Optional str name for the file where the plot will be saved. If None, the file will be called experiment_runtime_vs_mde_CURRENT_TIME.png
+
+        :return: Nothing. Just makes the plot and saves it to the desired directory
+        """
+
+        # TODO: Generalize to n-variants
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
+
+        fig, ax = plt.subplots()
+        control_label = "control: {0} (95% CI: {1} - {2})".format(np.round(df['control_mean'].values[0], 5),
+                                                                  np.round(df['control_confidence_interval_95.0_percent_lower'].values[0], 5),
+                                                                  np.round(df['control_confidence_interval_95.0_percent_upper'].values[0], 5))
+        treatment_label = "treatment: {0} (95% CI: {1} - {2})".format(np.round(df['treatment_mean'].values[0], 5),
+                                                                      np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 5),
+                                                                      np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 5))
+        self.add_interval(ax,
+                          [df['treatment_confidence_interval_95.0_percent_lower'].values[0], df['treatment_confidence_interval_95.0_percent_upper'].values[0]],
+                          (1, 1),
+                          "||",
+                          color='green',
+                          label=treatment_label)
+        self.add_interval(ax,
+                          [df['control_confidence_interval_95.0_percent_lower'].values[0], df['control_confidence_interval_95.0_percent_upper'].values[0]],
+                          (0.8, 0.8),
+                          "||",
+                          color='blue',
+                          label=control_label)
+        plt.plot([df['control_mean'].values[0], df['treatment_mean'].values[0]], [0.8, 1], 'o', ms=10, color='black')
+        ax.annotate(np.round(df['control_mean'].values[0], 5), xy=(df['control_mean'].values[0], 0.85), ha='center', va='center', size=12)
+        ax.annotate(np.round(df['treatment_mean'].values[0], 5), xy=(df['treatment_mean'].values[0], 1.05), ha='center', va='center', size=12)
+        ax.annotate(np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 5), xy=(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 0.9), ha='center', va='center',
+                    size=12)
+        ax.annotate(np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 5), xy=(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 0.9), ha='center', va='center',
+                    size=12)
+
+        ax.annotate(np.round(df['control_confidence_interval_95.0_percent_upper'].values[0], 5), xy=(df['control_confidence_interval_95.0_percent_upper'].values[0], 0.7), ha='center', va='center',
+                    size=12)
+        ax.annotate(np.round(df['control_confidence_interval_95.0_percent_lower'].values[0], 5), xy=(df['control_confidence_interval_95.0_percent_lower'].values[0], 0.7), ha='center', va='center',
+                    size=12)
+
+        plt.ylim((0.25, 1.25))
+
+        frame_ = plt.gca()
+        frame_.axes.yaxis.set_ticklabels([])
+
+        plt.title("Treatment vs Control results: p-value = {0}".format(np.round(df['p_value'].values[0], 10)), fontsize=16)
+        plt.legend(loc=4)
+
+        if save_path is None:
+            save_path = os.getcwd()
+
+        if output_filename is None:
+            file_name = 'ab_test_results_{0}.png'.format(current_time)
+        else:
+            if not output_filename.endswith('.png'):
+                file_name = output_filename + '.png'
+            else:
+                file_name = output_filename
+
+        save_path = os.path.join(save_path, file_name)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
