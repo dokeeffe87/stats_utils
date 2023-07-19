@@ -469,7 +469,7 @@ class ConversionExperiment:
         assert alternative in alternatives_, "{0} is not a valid alternative. Accepted values are {1}".format(alternative, alternatives_)
 
         df_stats = df.groupby(group_column_name).describe()
-        df_stats.columns = ['_'.join(col).strip().strip('_') for col in df_stats.columns.values]
+        df_stats.columns = ['_'.join(col).strip().strip('_') for col in df_stats.columns]
 
         # group means
         mu_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_mean'].values[0]
@@ -524,7 +524,7 @@ class ConversionExperiment:
         return df_results
 
     @staticmethod
-    def add_interval(ax, xdata, ydata, caps="  ", color='blue', label='control'):
+    def add_interval(ax: mpl.axes, xdata: list, ydata: tuple, caps: str, color: str = 'blue', label: str = 'control') -> tuple:
         """
         Function to add and format the intervals for plotting the 95% confidence intervals in the method plot_ab_test_results
 
@@ -565,12 +565,12 @@ class ConversionExperiment:
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
         fig, ax = plt.subplots()
-        control_label = "control: {0} (95% CI: {1} - {2})".format(np.round(df['control_mean'].values[0], 5),
-                                                                  np.round(df['control_confidence_interval_95.0_percent_lower'].values[0], 5),
-                                                                  np.round(df['control_confidence_interval_95.0_percent_upper'].values[0], 5))
-        treatment_label = "treatment: {0} (95% CI: {1} - {2})".format(np.round(df['treatment_mean'].values[0], 5),
-                                                                      np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 5),
-                                                                      np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 5))
+        control_label = "control: {0} (95% CI: {1} - {2})".format(str(np.round(df['control_mean'].values[0] * 100, 4)) + "%",
+                                                                  str(np.round(df['control_confidence_interval_95.0_percent_lower'].values[0] * 100, 4)) + "%",
+                                                                  str(np.round(df['control_confidence_interval_95.0_percent_upper'].values[0] * 100, 4)) + "%")
+        treatment_label = "treatment: {0} (95% CI: {1} - {2})".format(str(np.round(df['treatment_mean'].values[0] * 100, 4)) + "%",
+                                                                      str(np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0] * 100, 4)) + "%",
+                                                                      str(np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0] * 100, 4)) + "%")
         self.add_interval(ax,
                           [df['treatment_confidence_interval_95.0_percent_lower'].values[0], df['treatment_confidence_interval_95.0_percent_upper'].values[0]],
                           (1, 1),
@@ -584,16 +584,28 @@ class ConversionExperiment:
                           color='blue',
                           label=control_label)
         plt.plot([df['control_mean'].values[0], df['treatment_mean'].values[0]], [0.8, 1], 'o', ms=10, color='black')
-        ax.annotate(np.round(df['control_mean'].values[0], 5), xy=(df['control_mean'].values[0], 0.85), ha='center', va='center', size=12)
-        ax.annotate(np.round(df['treatment_mean'].values[0], 5), xy=(df['treatment_mean'].values[0], 1.05), ha='center', va='center', size=12)
-        ax.annotate(np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 5), xy=(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 0.9), ha='center', va='center',
+        ax.annotate(str(np.round(df['control_mean'].values[0] * 100, 4)) + "%", xy=(df['control_mean'].values[0], 0.85), ha='center', va='center', size=12)
+        ax.annotate(str(np.round(df['treatment_mean'].values[0] * 100, 4)) + "%", xy=(df['treatment_mean'].values[0], 1.05), ha='center', va='center', size=12)
+        ax.annotate(str(np.round(df['treatment_confidence_interval_95.0_percent_upper'].values[0] * 100, 4)) + "%",
+                    xy=(df['treatment_confidence_interval_95.0_percent_upper'].values[0], 0.9),
+                    ha='center',
+                    va='center',
                     size=12)
-        ax.annotate(np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 5), xy=(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 0.9), ha='center', va='center',
+        ax.annotate(str(np.round(df['treatment_confidence_interval_95.0_percent_lower'].values[0] * 100, 4)) + "%",
+                    xy=(df['treatment_confidence_interval_95.0_percent_lower'].values[0], 0.9),
+                    ha='center',
+                    va='center',
                     size=12)
 
-        ax.annotate(np.round(df['control_confidence_interval_95.0_percent_upper'].values[0], 5), xy=(df['control_confidence_interval_95.0_percent_upper'].values[0], 0.7), ha='center', va='center',
+        ax.annotate(str(np.round(df['control_confidence_interval_95.0_percent_upper'].values[0] * 100, 4)) + "%",
+                    xy=(df['control_confidence_interval_95.0_percent_upper'].values[0], 0.7),
+                    ha='center',
+                    va='center',
                     size=12)
-        ax.annotate(np.round(df['control_confidence_interval_95.0_percent_lower'].values[0], 5), xy=(df['control_confidence_interval_95.0_percent_lower'].values[0], 0.7), ha='center', va='center',
+        ax.annotate(str(np.round(df['control_confidence_interval_95.0_percent_lower'].values[0] * 100, 4)) + "%",
+                    xy=(df['control_confidence_interval_95.0_percent_lower'].values[0], 0.7),
+                    ha='center',
+                    va='center',
                     size=12)
 
         plt.ylim((0.25, 1.25))
