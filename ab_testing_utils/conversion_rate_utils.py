@@ -254,7 +254,7 @@ class ConversionExperiment:
         control and variants is the same. Furthermore, if you use more than 2 variants, note that this can only recommend designs which split the population evenly amongst all
         variants.  For example, if you request 3 variants, the design assumes the population will be split as 1/3 in control 1/3 in variant A and the remaining 1/3 in variant B.
 
-        :param monthly_num_obs: The expected number of observations (i.e. merchants, view, whatever the experimental unit is) seen in a 30 day period
+        :param monthly_num_obs: The expected number of observations (i.e. merchants, views, whatever the experimental unit is) seen in a 28 day period
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
         :param n_variants: The number of variants you want to use in your test.  Usually this is two (control and exposure), but you can add any integer number here if you really
                            want to.  Be very careful when proposing multi-variant experiments! Be sure to consult with a data scientist first. Multi-variant experiments can be
@@ -266,7 +266,7 @@ class ConversionExperiment:
         :return: A DataFrame with a range of different experiment runtimes, the required sample size and the magnitude of the effect that can be measured, given the supplied level
                  of confidence and power
         """
-        # TODO: update naming convention. It's number of observations in 4 weeks...
+        # TODO: update naming convention. It's number of observations in 4 weeks
         mde_range = np.arange(0.001, 2.001, 0.001)
 
         sample_sizes = [self.calc_sample_size(power=power,
