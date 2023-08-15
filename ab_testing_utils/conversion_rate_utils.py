@@ -248,11 +248,11 @@ class ConversionExperiment:
         """
         Function to generate a minimum detectable effect size table.  The idea here is to produce a DataFrame which matches minimum detectable effect sizes with required sample
         sizes, at the desired level of confidence and power.  Coupled with the expected monthly number of observations, this will provide an estimate for experiment runtime vs the
-        size of the effect the experiment can detect.  One assumption is that the expected daily number of observations is the monthly value supplied divided by 30. It's
-        important to make sure that the monthly expected number of observations is accurate, or less the experiment runtimes could be unrealistic. Also note, ths simplified
-        approach assumes that the standard deviation between control and variants is the same. Furthermore, if you use more than 2 variants, note that this can only recommend
-        designs which split the population evenly amongst all variants.  For example, if you request 3 variants, the design assumes the population will be split as 1/3 in control
-        1/3 in variant A and the remaining 1/3 in variant B.
+        size of the effect the experiment can detect.  One assumption is that the expected daily number of observations is the monthly value supplied divided by 28. This assumes a
+        standard "month" of 4 weeks, or 28 days. This is less than a true month, but is what we typically use as a measure. It's important to make sure that the monthly expected
+        number of observations is accurate, or less the experiment runtimes could be unrealistic. Also note, ths simplified approach assumes that the standard deviation between
+        control and variants is the same. Furthermore, if you use more than 2 variants, note that this can only recommend designs which split the population evenly amongst all
+        variants.  For example, if you request 3 variants, the design assumes the population will be split as 1/3 in control 1/3 in variant A and the remaining 1/3 in variant B.
 
         :param monthly_num_obs: The expected number of observations (i.e. merchants, view, whatever the experimental unit is) seen in a 30 day period
         :param baseline_conversion_rate: Expected historical conversion rate prior to experiment
@@ -266,7 +266,7 @@ class ConversionExperiment:
         :return: A DataFrame with a range of different experiment runtimes, the required sample size and the magnitude of the effect that can be measured, given the supplied level
                  of confidence and power
         """
-
+        # TODO: update naming convention. It's number of observations in 4 weeks...
         mde_range = np.arange(0.001, 2.001, 0.001)
 
         sample_sizes = [self.calc_sample_size(power=power,
@@ -289,7 +289,7 @@ class ConversionExperiment:
         df_['new_conversion_rate_lower_bound'] = new_conversion_rates_lower
         df_['total_sample_size'] = sample_sizes
         df_['sample_size_per_variant'] = np.array(sample_sizes) / n_variants
-        df_['days'] = df_['total_sample_size'] / (monthly_num_obs / 30)
+        df_['days'] = df_['total_sample_size'] / (monthly_num_obs / 28)
         df_['weeks'] = df_['days'] / 7
         df_['weeks_non_rounded'] = df_['days'] / 7
         df_['fraction_of_expected_monthly_sample'] = df_['total_sample_size'] / monthly_num_obs
