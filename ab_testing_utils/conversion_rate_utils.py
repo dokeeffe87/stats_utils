@@ -442,7 +442,7 @@ class ConversionExperiment:
 
         return critical_value
 
-    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative='two_sided') -> pd.DataFrame:
+    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, control_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative='two_sided') -> pd.DataFrame:
         """
         Simple function to compare the outcomes in an A/B experiment (i.e. 2 variants).  This just compares the means of the control and treatment groups, modeled as the difference
         between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha. This is nominally a test on proportions
@@ -453,6 +453,8 @@ class ConversionExperiment:
         :param group_column_name: Name of the column which contains the group assignments
         :param treatment_name: The name of the treatment group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
                                the control
+        :param control_name: The name of the control group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
+                       the treatment
         :param outcome_column: The name of the column containing the measured outcome variable
         :param alpha: The significance level of the test
         :param null_hypothesis: The null difference we are testing against. Usually this is zero; i.e. the null hypothesis is that the difference in means between control and
@@ -468,20 +470,22 @@ class ConversionExperiment:
 
         assert alternative in alternatives_, "{0} is not a valid alternative. Accepted values are {1}".format(alternative, alternatives_)
 
+        assert control_name != treatment_name, "control and treatment groups can't have the same name"
+
         df_stats = df.groupby(group_column_name).describe()
         df_stats.columns = ['_'.join(col).strip().strip('_') for col in df_stats.columns]
 
         # group means
         mu_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_mean'].values[0]
-        mu_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_mean'].values[0]
+        mu_control = df_stats.query("{0} == @control_name".format(group_column_name))[outcome_column + '_mean'].values[0]
 
         # group standard deviations
         std_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_std'].values[0]
-        std_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_std'].values[0]
+        std_control = df_stats.query("{0} == @control_name".format(group_column_name))[outcome_column + '_std'].values[0]
 
         # group sample sizes
         count_treatment = df_stats.query("{0} == @treatment_name".format(group_column_name))[outcome_column + '_count'].values[0]
-        count_control = df_stats.query("{0} != @treatment_name".format(group_column_name))[outcome_column + '_count'].values[0]
+        count_control = df_stats.query("{0} == @control_name".format(group_column_name))[outcome_column + '_count'].values[0]
 
         # Compute standard errors
         se_treatment = std_treatment / np.sqrt(count_treatment)
@@ -507,13 +511,13 @@ class ConversionExperiment:
         df_results[treatment_name + '_confidence_interval_{0}_percent_lower'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_treatment - self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)]
         df_results[treatment_name + '_confidence_interval_{0}_percent_upper'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_treatment + self.calculate_critical_values_for_ci(se=se_treatment, alpha=alpha)]
 
-        df_results['control_mean'] = [mu_control]
-        df_results['control_confidence_interval_{0}_percent_lower'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_control - self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
-        df_results['control_confidence_interval_{0}_percent_upper'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_control + self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
+        df_results[control_name + '_mean'] = [mu_control]
+        df_results[control_name + '_confidence_interval_{0}_percent_lower'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_control - self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
+        df_results[control_name + '_confidence_interval_{0}_percent_upper'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [mu_control + self.calculate_critical_values_for_ci(se=se_control, alpha=alpha)]
 
-        df_results['treatment_minus_control_mean'] = [diff_]
-        df_results['treatment_minus_control_{0}_percent_lower'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [diff_ - self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
-        df_results['treatment_minus_control_{0}_percent_upper'.format(np.format_float_positional((1 - alpha)*100, trim='-'))] = [diff_ + self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
+        df_results['{0}_minus_{1}_mean'.format(treatment_name, control_name)] = [diff_]
+        df_results['{0}_minus_{1}_{2}_percent_lower'.format(treatment_name, control_name, np.format_float_positional((1 - alpha)*100, trim='-'))] = [diff_ - self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
+        df_results['{0}_minus_{1}_{2}_percent_upper'.format(treatment_name, control_name, np.format_float_positional((1 - alpha)*100, trim='-'))] = [diff_ + self.calculate_critical_values_for_ci(se=se_diff_, alpha=alpha)]
 
         df_results['z_statistic'] = [z_statistic]
         df_results['p_value'] = [p_value]
@@ -554,6 +558,7 @@ class ConversionExperiment:
     def plot_ab_test_results(self, df: pd.DataFrame, control_name: str, treatment_name: str, alpha: float, save_path: str = None, output_filename: str = None):
         """
         Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their 95% confidence intervals.
+
         :param df: Input DataFrame with the results of the AB test. Should be the output of the method simple_ab_test
         :param control_name: The name of the control group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
                        the treatment
@@ -565,6 +570,8 @@ class ConversionExperiment:
 
         :return: Nothing. Just makes the plot and saves it to the desired directory
         """
+
+        assert control_name != treatment_name, "control and treatment groups can't have the same name"
 
         # TODO: Generalize to n-variants
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
@@ -580,15 +587,16 @@ class ConversionExperiment:
         treatment_upper_p = treatment_name + '_confidence_interval_{0}_percent_upper'.format(confidence_level)
 
         fig, ax = plt.subplots()
-        # TODO: UPDATE HERE FOR CONFIDENCE LEVEL
-        control_label = "control: {0} {1} CI: {2} - {3})".format(confidence_level + '%',
-                                                                 str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
-                                                                 str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
-                                                                 str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
-        treatment_label = "treatment: {0} ({1} CI: {2} - {3})".format(confidence_level + '%',
-                                                                      str(np.round(df[treatment_mean].values[0] * 100, 4)) + "%",
-                                                                      str(np.round(df[treatment_lower_p].values[0] * 100, 4)) + "%",
-                                                                      str(np.round(df[treatment_upper_p].values[0] * 100, 4)) + "%")
+        control_label = "{0}: {1} {2} CI: {3} - {4})".format(control_name,
+                                                             confidence_level + '%',
+                                                             str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
+                                                             str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
+                                                             str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
+        treatment_label = "{0}: {1} ({2} CI: {3} - {4})".format(treatment_name,
+                                                                confidence_level + '%',
+                                                                str(np.round(df[treatment_mean].values[0] * 100, 4)) + "%",
+                                                                str(np.round(df[treatment_lower_p].values[0] * 100, 4)) + "%",
+                                                                str(np.round(df[treatment_upper_p].values[0] * 100, 4)) + "%")
         self.add_interval(ax,
                           [df[treatment_lower_p].values[0], df[treatment_upper_p].values[0]],
                           (1, 1),
@@ -631,7 +639,7 @@ class ConversionExperiment:
         frame_ = plt.gca()
         frame_.axes.yaxis.set_ticklabels([])
 
-        plt.title("Treatment vs Control results: p-value = {0}".format(np.round(df['p_value'].values[0], 10)), fontsize=16)
+        plt.title("{0} vs {1} results: p-value = {2}".format(treatment_name, control_name, np.round(df['p_value'].values[0], 10)), fontsize=16)
         plt.legend(loc=4)
 
         if save_path is None:
