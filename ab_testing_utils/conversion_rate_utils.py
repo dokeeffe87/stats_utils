@@ -638,6 +638,7 @@ class ConversionExperiment:
 
         frame_ = plt.gca()
         frame_.axes.yaxis.set_ticklabels([])
+        plt.setp(ax.get_xticklabels(), rotation=30, horizontalalignment='right')
 
         plt.title("{0} vs {1} results: p-value = {2}".format(treatment_name, control_name, np.round(df['p_value'].values[0], 10)), fontsize=16)
         plt.legend(loc=4)
