@@ -557,7 +557,7 @@ class ConversionExperiment:
 
     def plot_ab_test_results(self, df: pd.DataFrame, control_name: str, treatment_name: str, alpha: float, save_path: str = None, output_filename: str = None):
         """
-        Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their 95% confidence intervals.
+        Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their confidence intervals.
 
         :param df: Input DataFrame with the results of the AB test. Should be the output of the method simple_ab_test
         :param control_name: The name of the control group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
