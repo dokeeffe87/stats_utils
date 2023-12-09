@@ -29,6 +29,7 @@ import matplotlib.ticker as mtick
 # import minimum_detectable_effect_size as mdes
 
 from time import gmtime, strftime
+from typing import Union
 from tqdm import tqdm
 from matplotlib import style
 from statsmodels.stats.multitest import multipletests as mult_test
@@ -443,7 +444,7 @@ class ConversionExperiment:
 
         return critical_value
 
-    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, control_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative='two_sided') -> pd.DataFrame:
+    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, control_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative: str = 'two_sided') -> pd.DataFrame:
         """
         Simple function to compare the outcomes in an A/B experiment (i.e. 2 variants).  This just compares the means of the control and treatment groups, modeled as the difference
         between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha. This is nominally a test on proportions
@@ -528,8 +529,7 @@ class ConversionExperiment:
 
         return df_results
 
-
-    def ab_n_variant(self, df, group_column_name, control_name, outcome_column, alpha, correction_method='bonferroni', null_hypothesis=0, alternative='two_sided'):
+    def ab_n_variant(self, df: pd.DataFrame, group_column_name: str, control_name: str, outcome_column: str, alpha: float, correction_method: str = 'bonferroni', null_hypothesis: float = 0, alternative: str = 'two_sided') -> Union[list, pd.DataFrame]:
         """
 
         :param df:
@@ -542,7 +542,6 @@ class ConversionExperiment:
         :param alternative:
         :return:
         """
-        # TODO: add support for custom treatment names
 
         alternatives_ = ['two_sided', 'larger', 'smaller']
 
