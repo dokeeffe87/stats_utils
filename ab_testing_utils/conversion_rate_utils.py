@@ -31,6 +31,7 @@ import matplotlib.ticker as mtick
 from time import gmtime, strftime
 from tqdm import tqdm
 from matplotlib import style
+from statsmodels.stats.multitest import multipletests as mult_test
 
 warnings.filterwarnings('ignore')
 
@@ -526,6 +527,76 @@ class ConversionExperiment:
         df_results.columns = ["value"]
 
         return df_results
+
+
+    def ab_n_variant(self, df, group_column_name, control_name, outcome_column, alpha, correction_method='bonferroni', null_hypothesis=0, alternative='two_sided'):
+        """
+
+        :param df:
+        :param group_column_name:
+        :param control_name:
+        :param outcome_column:
+        :param alpha:
+        :param correction_method:
+        :param null_hypothesis:
+        :param alternative:
+        :return:
+        """
+        # TODO: add support for custom treatment names
+
+        alternatives_ = ['two_sided', 'larger', 'smaller']
+
+        assert alternative in alternatives_, "{0} is not a valid alternative. Accepted values are {1}".format(alternative, alternatives_)
+
+        # We're going to probably have to assume that all inputs are correct, i.e. that the treatment names are properly defined
+        # We can add a few simple sanity checks though
+        all_variants = df[group_column_name].unique()
+
+        assert len(all_variants) > 1, "More than one variant is required. Input data has: {0}".format(all_variants)
+
+        if len(all_variants) == 2:
+            print("Only two variants found, defaulting to simple AB test")
+            treatment_name = [x for x in all_variants if x != control_name][0]
+
+            return self.simple_ab_test(df=df,
+                                       group_column_name=group_column_name,
+                                       control_name=control_name,
+                                       treatment_name=treatment_name,
+                                       outcome_column=outcome_column,
+                                       alpha=alpha,
+                                       alternative=alternative,
+                                       null_hypothesis=null_hypothesis)
+
+        # Test all variants against control. Collect results and p-values
+        treatments_ = [x for x in all_variants if x != control_name]
+
+        list_of_dfs = []
+        for t_ in treatments_:
+            df_results_ = self.simple_ab_test(df=df.loc[(df[group_column_name].isin([control_name, t_]))],
+                                              group_column_name=group_column_name,
+                                              control_name=control_name,
+                                              treatment_name=t_,
+                                              outcome_column=outcome_column,
+                                              alpha=alpha,
+                                              null_hypothesis=null_hypothesis)
+
+            list_of_dfs.append(df_results_)
+
+        # Collect calculated p-values:
+        p_values = [df_['p-value'].values[0] for df_ in list_of_dfs]
+
+        # Adjust p-values for multiple hypothesis testing using required methodology
+        # Make sure you know what these adjustments are doing! Some techniques control for
+        # Family-wise Error Rate, while other False Discovery Rate.
+        res_ = mult_test(pvals=p_values, method=correction_method)
+
+        for i, df_ in enumerate(list_of_dfs):
+            reject_ = res_[0][i]
+            p_adj = res_[1][i]
+            df_['adjusted_p_value'] = p_adj
+            df_['reject_null_hypothesis'] = reject_
+
+        return [df_.T for df_ in list_of_dfs]
 
     @staticmethod
     def add_interval(ax: mpl.axes, xdata: list, ydata: tuple, caps: str, color: str = 'blue', label: str = 'control') -> tuple:
