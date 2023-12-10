@@ -657,14 +657,14 @@ class ConversionExperiment:
         treatment_upper_p = treatment_name + '_confidence_interval_{0}_percent_upper'.format(confidence_level)
 
         fig, ax = plt.subplots()
-        control_label = "{0}: {1} {2} CI: {3} - {4})".format(control_name,
-                                                             confidence_level + '%',
-                                                             str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
-                                                             str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
-                                                             str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
+        control_label = "{0}: {1} {2} (CI: {3} - {4})".format(control_name,
+                                                              str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
+                                                              confidence_level + '%',
+                                                              str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
+                                                              str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
         treatment_label = "{0}: {1} ({2} CI: {3} - {4})".format(treatment_name,
-                                                                confidence_level + '%',
                                                                 str(np.round(df[treatment_mean].values[0] * 100, 4)) + "%",
+                                                                confidence_level + '%',
                                                                 str(np.round(df[treatment_lower_p].values[0] * 100, 4)) + "%",
                                                                 str(np.round(df[treatment_upper_p].values[0] * 100, 4)) + "%")
         self.add_interval(ax,
