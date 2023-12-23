@@ -585,10 +585,10 @@ class ConversionExperiment:
                                               alpha=alpha,
                                               null_hypothesis=null_hypothesis)
 
-            list_of_dfs.append(df_results_)
+            list_of_dfs.append(df_results_.T)
 
         # Collect calculated p-values:
-        p_values = [df_['p-value'].values[0] for df_ in list_of_dfs]
+        p_values = [df_['p_value'].values[0] for df_ in list_of_dfs]
 
         # Adjust p-values for multiple hypothesis testing using required methodology
         # Make sure you know what these adjustments are doing! Some techniques control for
