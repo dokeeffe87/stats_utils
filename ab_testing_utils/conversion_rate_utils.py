@@ -29,8 +29,10 @@ import matplotlib.ticker as mtick
 # import minimum_detectable_effect_size as mdes
 
 from time import gmtime, strftime
+from typing import Union
 from tqdm import tqdm
 from matplotlib import style
+from statsmodels.stats.multitest import multipletests as mult_test
 
 warnings.filterwarnings('ignore')
 
@@ -442,14 +444,14 @@ class ConversionExperiment:
 
         return critical_value
 
-    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, control_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative='two_sided') -> pd.DataFrame:
+    def simple_ab_test(self, df: pd.DataFrame, group_column_name: str, control_name: str, treatment_name: str, outcome_column: str, alpha: float, null_hypothesis: float, alternative: str = 'two_sided') -> pd.DataFrame:
         """
         Simple function to compare the outcomes in an A/B experiment (i.e. 2 variants).  This just compares the means of the control and treatment groups, modeled as the difference
         between two normal distributions.  This will calculate the p-value, as well as compute the confidence interval at the desired significance level alpha. This is nominally a test on proportions
         (e.g. conversion rates) for two independent samples. If you have less than 30 samples, don't use this.
 
         :param df: DataFrame which contains the experiment results. There should be a column with the actual outcome variable, and a column indicating which group the observation
-                   is from.
+                   is from
         :param group_column_name: Name of the column which contains the group assignments
         :param treatment_name: The name of the treatment group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
                                the control
@@ -527,6 +529,80 @@ class ConversionExperiment:
 
         return df_results
 
+    def ab_n_variant(self, df: pd.DataFrame, group_column_name: str, control_name: str, outcome_column: str, alpha: float, correction_method: str = 'bonferroni', null_hypothesis: float = 0, alternative: str = 'two_sided') -> Union[list, pd.DataFrame]:
+        """
+        Function for evaluating the results of an n-variant experiment. This will compare each treatment to the control group as well as apply p-value corrections to address multiple testing bias
+
+        :param df: DataFrame which contains the experiment results. There should be a column with the actual outcome variable, and a column indicating which group the observation
+                   is from
+        :param group_column_name: Name of the column which contains the group assignments
+        :param control_name: Name of the control group
+        :param outcome_column: The name of the column containing the measured outcome variable
+        :param alpha: The significance level of the test
+        :param correction_method: Name of the p-value adjustment method you'd like to use. Supports all methods used by statsmodels.stats.multitest.multipletests
+        :param null_hypothesis: The null difference we are testing against. Usually this is zero; i.e. the null hypothesis is that the difference in means between control and
+                                treatment groups is zero. This doesn't have to be the case, and you can specify a different value of this difference if you want.
+        :param alternative: The alternative hypothesis.  Can be two-sided, larger, or smaller. If two-sided tests mean_treatment not equal to mean_control.
+                            larger means mean_treatment >= mean_control, and smaller means mean_treatment <= mean_control. All the means hare are assumed to be proportions.
+
+        :return: A list of DataFrames with the test results. Namely, the observed means in both control and each treatment (along with confidence intervals), as well as the difference in
+        means, its confidence interval, the measured Z statistic, the p-value, and the adjusted p-value. Each DataFrame in the list contains these values for one treatment/control comparison
+        """
+
+        alternatives_ = ['two_sided', 'larger', 'smaller']
+
+        assert alternative in alternatives_, "{0} is not a valid alternative. Accepted values are {1}".format(alternative, alternatives_)
+
+        # We're going to probably have to assume that all inputs are correct, i.e. that the treatment names are properly defined
+        # We can add a few simple sanity checks though
+        all_variants = df[group_column_name].unique()
+
+        assert len(all_variants) > 1, "More than one variant is required. Input data has: {0}".format(all_variants)
+
+        if len(all_variants) == 2:
+            print("Only two variants found, defaulting to simple AB test")
+            treatment_name = [x for x in all_variants if x != control_name][0]
+
+            return self.simple_ab_test(df=df,
+                                       group_column_name=group_column_name,
+                                       control_name=control_name,
+                                       treatment_name=treatment_name,
+                                       outcome_column=outcome_column,
+                                       alpha=alpha,
+                                       alternative=alternative,
+                                       null_hypothesis=null_hypothesis)
+
+        # Test all variants against control. Collect results and p-values
+        treatments_ = [x for x in all_variants if x != control_name]
+
+        list_of_dfs = []
+        for t_ in treatments_:
+            df_results_ = self.simple_ab_test(df=df.loc[(df[group_column_name].isin([control_name, t_]))],
+                                              group_column_name=group_column_name,
+                                              control_name=control_name,
+                                              treatment_name=t_,
+                                              outcome_column=outcome_column,
+                                              alpha=alpha,
+                                              null_hypothesis=null_hypothesis)
+
+            list_of_dfs.append(df_results_.T)
+
+        # Collect calculated p-values:
+        p_values = [df_['p_value'].values[0] for df_ in list_of_dfs]
+
+        # Adjust p-values for multiple hypothesis testing using required methodology
+        # Make sure you know what these adjustments are doing! Some techniques control for
+        # Family-wise Error Rate, while other False Discovery Rate.
+        res_ = mult_test(pvals=p_values, method=correction_method)
+
+        for i, df_ in enumerate(list_of_dfs):
+            reject_ = res_[0][i]
+            p_adj = res_[1][i]
+            df_['adjusted_p_value'] = p_adj
+            df_['reject_null_hypothesis'] = reject_
+
+        return [df_.T for df_ in list_of_dfs]
+
     @staticmethod
     def add_interval(ax: mpl.axes, xdata: list, ydata: tuple, caps: str, color: str = 'blue', label: str = 'control') -> tuple:
         """
@@ -555,9 +631,143 @@ class ConversionExperiment:
 
         return (line, (a0, a1))
 
+    @staticmethod
+    def generate_plot_labels(list_of_dfs: list, control_name: str, alpha: float) -> dict:
+        """
+        Helper function to generate the labels for each control-treatment comparison in an n-variant test
+
+        :param list_of_dfs: List containing n-1 DataFrames, comparing the ith treatment to control. This should be the output of the method ab_n_variant
+        :param control_name: Name of the control group
+        :param alpha: The significance level of the test
+
+        :return: A dictionary with treatment names as keys and values required for plotting the results in plot_n_variant_ab_test_results
+        """
+
+        label_dict = {}
+
+        # generate control labels:
+        confidence_level = np.format_float_positional((1 - alpha) * 100, trim='-')
+        control_mean = control_name + '_mean'
+        control_lower_p = control_name + '_confidence_interval_{0}_percent_lower'.format(confidence_level)
+        control_upper_p = control_name + '_confidence_interval_{0}_percent_upper'.format(confidence_level)
+        control_label = "{0}: {1} {2} (CI: {3} - {4})".format(control_name,
+                                                              str(np.round(list_of_dfs[0].T[control_mean].values[0] * 100, 4)) + "%",
+                                                              confidence_level + '%',
+                                                              str(np.round(list_of_dfs[0].T[control_lower_p].values[0] * 100, 4)) + "%",
+                                                              str(np.round(list_of_dfs[0].T[control_upper_p].values[0] * 100, 4)) + "%")
+
+        label_dict['control'] = {'mean': control_mean, 'lower': control_lower_p, 'upper': control_upper_p, 'label': control_label}
+        label_dict['confidence_level'] = confidence_level
+
+        for i, df in enumerate(list_of_dfs):
+            df_ = df.T
+            treatment_name = [x for x in df_.columns if control_name not in x and '_mean' in x and 'minus' not in x][0].split('_mean')[0]
+
+            treatment_mean = treatment_name + '_mean'
+            treatment_lower_p = treatment_name + '_confidence_interval_{0}_percent_lower'.format(confidence_level)
+            treatment_upper_p = treatment_name + '_confidence_interval_{0}_percent_upper'.format(confidence_level)
+
+            treatment_label = "{0}: {1} ({2} CI: {3} - {4}) -- adjusted p-value = {5}".format(treatment_name,
+                                                                                              str(np.round(df_[treatment_mean].values[0] * 100, 4)) + "%",
+                                                                                              confidence_level + '%',
+                                                                                              str(np.round(df_[treatment_lower_p].values[0] * 100, 4)) + "%",
+                                                                                              str(np.round(df_[treatment_upper_p].values[0] * 100, 4)) + "%",
+                                                                                              str(np.round(df_['adjusted_p_value'].values[0], 4)))
+
+            label_dict[treatment_name] = {'mean': treatment_mean, 'lower': treatment_lower_p, 'upper': treatment_upper_p, 'label': treatment_label, 'df_index': i}
+
+        return label_dict
+
+    def plot_n_variant_ab_test_results(self, list_of_dfs: list, control_name: str, alpha: float, save_path: str = None, output_filename: str = None):
+        """
+        Function to visualize the results of an n-variant experiment
+
+        :param list_of_dfs: List containing n-1 DataFrames, comparing the ith treatment to control. This should be the output of the method ab_n_variant
+        :param control_name: Name of the control group
+        :param alpha: The significance level of the test
+        :param save_path: Path to save the plot to. If None, the file will be saved to the current working directory.
+        :param output_filename: Optional str name for the file where the plot will be saved. If None, the file will be called experiment_runtime_vs_mde_CURRENT_TIME.png
+
+        :return: Nothing. Just makes the plot and saves it to the desired directory
+        """
+
+        if len(list_of_dfs) == 1:
+            print('Two variant test detected. Running plot_ab_test_results instead')
+            df_ = list_of_dfs[0].T
+            treatment_name_ = [x for x in df_.columns if '_mean' in x and control_name not in x][0].split('_mean')[0]
+            self.plot_ab_test_results(df=df_, control_name=control_name, treatment_name=treatment_name_, alpha=alpha, save_path=save_path, output_filename=output_filename)
+
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
+
+        label_dict = self.generate_plot_labels(list_of_dfs=list_of_dfs, control_name=control_name, alpha=alpha)
+        # TODO: Make this customizable?
+        color_ = ['r', 'g', 'b', 'y', 'o']
+
+        means_to_plot = []
+        confidence_intervals_to_plot = []
+        labels_to_plot = []
+        for group_, label_dict_ in label_dict.items():
+            if group_ == 'confidence_level':
+                pass
+            else:
+                if group_ == control_name:
+                    df_ = list_of_dfs[0].T
+                    means_to_plot.append(df_[label_dict_['mean']].values[0])
+                    confidence_intervals_to_plot.append([df_[label_dict_['lower']].values[0], df_[label_dict_['upper']].values[0]])
+                    labels_to_plot.append(label_dict_['label'])
+                else:
+                    df_ = list_of_dfs[label_dict_['df_index']].T
+                    means_to_plot.append(df_[label_dict_['mean']].values[0])
+                    confidence_intervals_to_plot.append([df_[label_dict_['lower']].values[0], df_[label_dict_['upper']].values[0]])
+                    labels_to_plot.append(label_dict_['label'])
+
+        fig, ax = plt.subplots()
+        num_intervals = len(confidence_intervals_to_plot)
+        y_positions = []
+        for i, int_ in enumerate(confidence_intervals_to_plot):
+            y_pos = (num_intervals - i) / num_intervals
+            y_positions.append(y_pos)
+            if i == len(color_):
+                j = 0
+            else:
+                j = i
+            c_ = color_[j]
+            self.add_interval(ax,
+                              int_,
+                              (y_pos, y_pos),
+                              "||",
+                              color=c_,
+                              label=labels_to_plot[i])
+        plt.plot(means_to_plot, y_positions, 'o', ms=10, color='black')
+        ax.legend(loc='upper center',
+                  bbox_to_anchor=(0.5, -0.3),
+                  fancybox=True,
+                  shadow=True)
+        ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+
+        frame_ = plt.gca()
+        frame_.axes.yaxis.set_ticklabels([])
+        plt.setp(ax.get_xticklabels(), rotation=30, horizontalalignment='right')
+        plt.title("{0}-variant test results".format(len(means_to_plot)), fontsize=20)
+        plt.xlabel("Conversion rate", fontsize=16)
+
+        if save_path is None:
+            save_path = os.getcwd()
+
+        if output_filename is None:
+            file_name = '{0}_variant_test_results_{1}.png'.format(len(means_to_plot), current_time)
+        else:
+            if not output_filename.endswith('.png'):
+                file_name = output_filename + '.png'
+            else:
+                file_name = output_filename
+
+        save_path = os.path.join(save_path, file_name)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
     def plot_ab_test_results(self, df: pd.DataFrame, control_name: str, treatment_name: str, alpha: float, save_path: str = None, output_filename: str = None):
         """
-        Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their 95% confidence intervals.
+        Function to visualize the results of a simple two variant AB test.  This will plot the treatment and control means, as well as their confidence intervals.
 
         :param df: Input DataFrame with the results of the AB test. Should be the output of the method simple_ab_test
         :param control_name: The name of the control group in the group_column_name column. This is a two variant test, so it's assumed that anything not in this group is in
@@ -573,7 +783,6 @@ class ConversionExperiment:
 
         assert control_name != treatment_name, "control and treatment groups can't have the same name"
 
-        # TODO: Generalize to n-variants
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
         # Generate the expected column names:
@@ -587,14 +796,14 @@ class ConversionExperiment:
         treatment_upper_p = treatment_name + '_confidence_interval_{0}_percent_upper'.format(confidence_level)
 
         fig, ax = plt.subplots()
-        control_label = "{0}: {1} {2} CI: {3} - {4})".format(control_name,
-                                                             confidence_level + '%',
-                                                             str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
-                                                             str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
-                                                             str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
+        control_label = "{0}: {1} {2} (CI: {3} - {4})".format(control_name,
+                                                              str(np.round(df[control_mean].values[0] * 100, 4)) + "%",
+                                                              confidence_level + '%',
+                                                              str(np.round(df[control_lower_p].values[0] * 100, 4)) + "%",
+                                                              str(np.round(df[control_upper_p].values[0] * 100, 4)) + "%")
         treatment_label = "{0}: {1} ({2} CI: {3} - {4})".format(treatment_name,
-                                                                confidence_level + '%',
                                                                 str(np.round(df[treatment_mean].values[0] * 100, 4)) + "%",
+                                                                confidence_level + '%',
                                                                 str(np.round(df[treatment_lower_p].values[0] * 100, 4)) + "%",
                                                                 str(np.round(df[treatment_upper_p].values[0] * 100, 4)) + "%")
         self.add_interval(ax,
