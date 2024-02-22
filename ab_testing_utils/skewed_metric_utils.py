@@ -329,7 +329,7 @@ class RandomizationInference:
 
         :return: Any array with the lower and upper confidence interval bounds.
         """
-
+        # TODO: revamp this. This doesn't really make sense actually. What we should provide is the range of value where the null hypothesis would be rejected...
         # assert method in ['percentile', 'pivotal'], "Confidence interval calculation method {0} is not supported. Currently supported methods are: {1}".format(method, self._supported_ci_methods)
         # We'll only support the basic method for now (this is actually implemented in scipy https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_resampling.py#L279-L660)
 
@@ -358,7 +358,7 @@ class RandomizationInference:
 
         return ci_
 
-    def plot_and_output_results(self, confidence: float, test_stat_name: str, filename: str, output_path: str):
+    def plot_and_output_results(self, confidence: float, alternative: str, test_stat_name: str, filename: str, output_path: str):
         """
         Function to plot results of comparison between observed test statistic and hypothetical null distribution. The output is a png file.
 
@@ -377,6 +377,12 @@ class RandomizationInference:
         else:
             rounding_ = 2
 
+        df_for_ranking = self.df_sims.copy()
+        df_for_ranking['rejection'] = df_for_ranking['rank'] / df_for_ranking.shape[0]
+        rejection_edge = df_for_ranking.loc[(df_for_ranking['rejection'] <= (1 - confidence))]['rejection'].max()
+        rejection_edge_values = df_for_ranking.loc[(df_for_ranking['rejection'] == rejection_edge)]
+        print(rejection_edge_values)
+
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.histplot(data=self.df_sims, x='test_statistic', fill=True, ax=ax, kde=True, label='Null distribution')
         # Run a check if the there is no variation in simulated test statistics
@@ -387,12 +393,16 @@ class RandomizationInference:
         else:
             kde_x, kde_y = ax.lines[0].get_data()
 
-            plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0} ({1}% CI: {2} - {3})'.format(np.round(self.observed_test_statistic, rounding_), int(confidence * 100), np.round(
-                self.ci[0], rounding_), np.round(self.ci[1], rounding_)))
+            plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0}'.format(np.round(self.observed_test_statistic, rounding_)))
 
-            # ax.fill_between(kde_x, kde_y, where=(kde_x > pos_gmv_experiment.ci[0]) | (kde_x > pos_gmv_experiment.ci[1]), interpolate=True, color='#EF9A9A', alpha=0.5)
-            ax.fill_between(kde_x, kde_y, where=(kde_x > self.ci[0]) | (
-                        kde_x > self.ci[1]), interpolate=True, alpha=0.5, label="{0}% confidence interval".format(int(confidence * 100)))
+            if alternative == 'two-sided':
+                ax.fill_between(kde_x, kde_y, where=(np.abs(kde_x) >= np.abs(rejection_edge_values['test_statistic'].max())), interpolate=True, alpha=0.5, label="Rejection region at {0}% signficance level".format(int(confidence * 100)))
+            elif alternative == 'less':
+                ax.fill_between(kde_x, kde_y, where=(
+                            kde_x <= rejection_edge_values['test_statistic'].min()), interpolate=True, alpha=0.5, label="Rejection region at {0}% signficance level".format(int(confidence * 100)))
+            elif alternative == 'greater':
+                ax.fill_between(kde_x, kde_y, where=(
+                            kde_x >= rejection_edge_values['test_statistic'].max()), interpolate=True, alpha=0.5, label="Rejection region at {0}% signficance level".format(int(confidence * 100)))
 
         ax.set_title('Distribution of test statistic under null. p-value: {0}'.format(np.round(self.p_val, 3)), fontsize=18)
         ax.set_xlabel("{0}".format(test_stat_name), fontsize=16)
@@ -439,7 +449,7 @@ class RandomizationInference:
     def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None):
         """
         Function to handle running randomization inference on a two variant AB test. The point is to use randomization inference to test the hypothesis of the experiment.  The
-        function here breaks up the randomization inference process into 5 steps:
+        function here breaks up the randomization inference process into 4 steps:
 
         1. Implement a selected sharp null hypothesis
 
@@ -449,10 +459,7 @@ class RandomizationInference:
 
         4. Calculate the test p-value
 
-        5. Calculate confidence interval. This is the CI of the test statistic under the null. Only a very simple pivotal approach is supported currently
-
-        The final results are output as a figure which plots the hypothetical null distribution for the test statistic, the 95% confidence interval of the observed test statistic
-        under the null distribution, and the p-value of the test.
+        The final results are output as a figure which plots the hypothetical null distribution for the test statistic, the p-value of the test, and the rejection region.
 
         :param df: DataFrame contain unit assignments and observed outcomes from a two variant experiment. Each row should correspond to the outcome for a unique unit
         :param sharp_null_type: Either additive or multiplicative. Additive will add a constant value to the observed outcomes. Multiplicative will scale the observed outcomes by
@@ -520,8 +527,5 @@ class RandomizationInference:
 
         self.p_val = self.p_value(alternative=alternative)
 
-        # Step 5: calculate confidence interval. This is the CI of the test statistic under the null
-        self.ci = self.get_ci(confidence=confidence, alternative='two-sided')
-
         # final output. This should be summarized in a plot
-        self.plot_and_output_results(confidence=confidence, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
+        self.plot_and_output_results(confidence=confidence, alternative=alternative, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
