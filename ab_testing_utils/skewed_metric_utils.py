@@ -372,6 +372,11 @@ class RandomizationInference:
         :return: Nothing. Generates a png file with a plot summarizing the results of the comparison
         """
 
+        if test_stat_name == 'difference in ks statistic':
+            rounding_ = 5
+        else:
+            rounding_ = 2
+
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.histplot(data=self.df_sims, x='test_statistic', fill=True, ax=ax, kde=True, label='Null distribution')
         # Run a check if the there is no variation in simulated test statistics
@@ -382,8 +387,8 @@ class RandomizationInference:
         else:
             kde_x, kde_y = ax.lines[0].get_data()
 
-            plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0} ({1}% CI: {2} - {3})'.format(np.round(self.observed_test_statistic, 2), int(confidence * 100), np.round(
-                self.ci[0], 2), np.round(self.ci[1], 2)))
+            plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0} ({1}% CI: {2} - {3})'.format(np.round(self.observed_test_statistic, rounding_), int(confidence * 100), np.round(
+                self.ci[0], rounding_), np.round(self.ci[1], rounding_)))
 
             # ax.fill_between(kde_x, kde_y, where=(kde_x > pos_gmv_experiment.ci[0]) | (kde_x > pos_gmv_experiment.ci[1]), interpolate=True, color='#EF9A9A', alpha=0.5)
             ax.fill_between(kde_x, kde_y, where=(kde_x > self.ci[0]) | (
