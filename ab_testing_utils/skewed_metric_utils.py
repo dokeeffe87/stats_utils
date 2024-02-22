@@ -17,13 +17,13 @@ V1.0.0
 
 # import packages
 import os
-import sys
+# import sys
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
-import scipy
+# import scipy
 import math
 import itertools
 import warnings
@@ -39,6 +39,8 @@ warnings.filterwarnings('ignore')
 
 # set the plot style
 style.use('fivethirtyeight')
+
+# TODO: Implement more pre-built test statistics (e.g. some kind of ranking metric, diversity metrics, max, min, etc).
 
 
 def ri_test_statistic_difference_in_means(df: pd.DataFrame, outcome_col: str, treatment_col: str, treatment_name: str, control_name: str) -> float:
@@ -183,7 +185,7 @@ class RandomizationInference:
         return test_statistic_function
 
     @staticmethod
-    def calculate_test_statistic(df_: pd.DataFrame, test_statistic_function: functools.partial, assignments: Union[List, np.array, tuple], treatment_col: str = 'ri_in_treatment', treatment_name: Union[str, int] = 1, control_name: Union[str, int] = 0) -> float:
+    def calculate_test_statistic(df_: pd.DataFrame, test_statistic_function: functools.partial, assignments: Union[list, np.array, tuple], treatment_col: str = 'ri_in_treatment', treatment_name: Union[str, int] = 1, control_name: Union[str, int] = 0) -> float:
         """
         Function to calculate the test statistic for a given assignment
 
@@ -199,7 +201,7 @@ class RandomizationInference:
 
         df_[treatment_col] = assignments
         # Handle numeric instability here
-        stat_ = np.round(test_statistic_function(df=df_, outcome_col='outcome_sharp_null', treatment_col=treatment_col, treatment_name=1, control_name=0), 10)
+        stat_ = np.round(test_statistic_function(df=df_, outcome_col='outcome_sharp_null', treatment_col=treatment_col, treatment_name=treatment_name, control_name=control_name), 10)
 
         return stat_
 
@@ -219,6 +221,7 @@ class RandomizationInference:
 
         all_combs = list(itertools.combinations(list(range(size)), int(size * treatment_probability)))
         hypothetical_assignments = {}
+
         for i, comb in enumerate(all_combs):
             assignment_vector = np.zeros(size)
             assignment_vector[list(comb)] = 1
@@ -228,14 +231,28 @@ class RandomizationInference:
 
     def make_hypothetical_assignment(self, df_: pd.DataFrame, treatment_assignment_probability: float, test_statistic_function: functools.partial, sample_with_replacement: bool, num_perms: int = 1000) -> dict:
         """
+        Function to make hypothetical assignments and manage the calculation of test statistics for each assignment.  Currently, this only supports simple assignments via a
+        (possibly not 50/50) coin flip.  Also, only two variants are supported at the moment. There are two supported methodologies:
 
-        :param df_:
-        :param treatment_assignment_probability:
-        :param test_statistic_function:
-        :param sample_with_replacement:
-        :param num_perms:
-        :return:
+        1. First, the function checks how many possible combinations of treatment assignments are possible. If that number is small enough (artificially capped at 1,000), then all
+           combinations will be generated and the test statistic will be calculated for each. This really should almost never happen and is probably only relevant for very small
+           datasets.
+
+        2. Otherwise, a simulation process will be used.  If the parameter sample_with_replacement is False, the function will generate distinct hypothetical assignments (i.e.
+           there will be no repeats) up to the specified number of permutations.  Otherwise, the hypothetical assignments are just sampled with replacement.
+
+        :param df_: DataFrame with the outcomes under the sharp null
+        :param treatment_assignment_probability: The probability of being assigned to the treatment group. Must be positive and less than 1.
+        :param test_statistic_function: The function used to calculate the test statistic
+        :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
+                                        be sampled.
+        :param num_perms: Number of hypothetical assignments to draw
+
+        :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
+                 hypothetical assignment
         """
+
+        # TODO: add support for more complex assignment strategies (e.g. blocking).
 
         sim_dict = {}
 
@@ -247,7 +264,7 @@ class RandomizationInference:
         except ValueError:
             n_combs = np.inf
 
-        if n_combs <= num_perms:
+        if n_combs <= 1000:
             print('Found {0} distinct assignment combinations. All combinations will be simulated.')
             # Just get all possible assignment combinations. This should be small enough to handle in memory
             assignment_dict = self.get_all_combinations(size=df_.shape[0], treatment_probability=treatment_assignment_probability)
@@ -279,7 +296,7 @@ class RandomizationInference:
         """
         Function to calculate the p-value of the observed test statistic given the simulated null distribution
 
-        :param alternative: Alternative for calculating the p-value. I.e. a two-sided vs one-sided test.
+        :param alternative: Alternative for calculating the p-value. i.e. a two-sided vs one-sided test.
 
         :return: The calculated p-value
         """
@@ -304,10 +321,13 @@ class RandomizationInference:
 
     def get_ci(self, confidence: float, alternative: str = 'two-sided') -> np.array:
         """
+        Function to calculate the confidence interval for the test statistic under the hypothetical null.  Only a very simple pivotal approach is supported currently.  This is
+        essentially the same thing as the 'basic' method for calculating confidence intervals in the bootstrap functionality in scipy.
 
-        :param confidence:
-        :param alternative:
-        :return:
+        :param confidence: The confidence level of the test (i.e. 0.95 for 95%)
+        :param alternative: One of two-sided, less, or greater. Only two-sided is currently supported by default. Probably just remove this in future versions.
+
+        :return: Any array with the lower and upper confidence interval bounds.
         """
 
         # assert method in ['percentile', 'pivotal'], "Confidence interval calculation method {0} is not supported. Currently supported methods are: {1}".format(method, self._supported_ci_methods)
@@ -354,14 +374,20 @@ class RandomizationInference:
 
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.histplot(data=self.df_sims, x='test_statistic', fill=True, ax=ax, kde=True, label='Null distribution')
-        kde_x, kde_y = ax.lines[0].get_data()
+        # Run a check if the there is no variation in simulated test statistics
+        unique_test_stats = self.df_sims['test_statistic'].nunique()
 
-        p0 = plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0} ({1}% CI: {2} - {3})'.format(np.round(self.observed_test_statistic, 2), int(confidence * 100), np.round(
-            self.ci[0], 2), np.round(self.ci[1], 2)))
+        if unique_test_stats == 1:
+            print('Warning: no variation detected in test statistic permutations. Unique value is: {0}'.format(self.df_sims['test_statistic'].unique()[0]))
+        else:
+            kde_x, kde_y = ax.lines[0].get_data()
 
-        # ax.fill_between(kde_x, kde_y, where=(kde_x > pos_gmv_experiment.ci[0]) | (kde_x > pos_gmv_experiment.ci[1]), interpolate=True, color='#EF9A9A', alpha=0.5)
-        ax.fill_between(kde_x, kde_y, where=(kde_x > self.ci[0]) | (
-                    kde_x > self.ci[1]), interpolate=True, alpha=0.5, label="{0}% confidence interval".format(int(confidence * 100)))
+            plt.axvline(x=self.observed_test_statistic, color='green', linestyle='--', label='Observed test statistic: {0} ({1}% CI: {2} - {3})'.format(np.round(self.observed_test_statistic, 2), int(confidence * 100), np.round(
+                self.ci[0], 2), np.round(self.ci[1], 2)))
+
+            # ax.fill_between(kde_x, kde_y, where=(kde_x > pos_gmv_experiment.ci[0]) | (kde_x > pos_gmv_experiment.ci[1]), interpolate=True, color='#EF9A9A', alpha=0.5)
+            ax.fill_between(kde_x, kde_y, where=(kde_x > self.ci[0]) | (
+                        kde_x > self.ci[1]), interpolate=True, alpha=0.5, label="{0}% confidence interval".format(int(confidence * 100)))
 
         ax.set_title('Distribution of test statistic under null. p-value: {0}'.format(np.round(self.p_val, 3)), fontsize=18)
         ax.set_xlabel("{0}".format(test_stat_name), fontsize=16)
@@ -383,43 +409,71 @@ class RandomizationInference:
 
     def run_randomization_inference(self, df_: pd.DataFrame, test_statistic_function: functools.partial, treatment_assignment_probability: float, sample_with_replacement: bool, num_perms: int = 1000) -> dict:
         """
+        Function to handle running the randomization inference step. This just collects the results from make_hypothetical_assignments. We can probably remove this in future
+        versions
 
-        :param df_:
-        :param test_statistic_function:
-        :param treatment_assignment_probability:
-        :param sample_with_replacement:
-        :param num_perms:
-        :return:
+        :param df_: DataFrame with the outcomes under the sharp null
+        :param treatment_assignment_probability: The probability of being assigned to the treatment group. Must be positive and less than 1.
+        :param test_statistic_function: The function used to calculate the test statistic
+        :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
+                                        be sampled.
+        :param num_perms: Number of hypothetical assignments to draw. The default is 1000, but more may be required.  Note that setting sample_with_replacement will make running
+                          more permutations much faster than requiring that each be unique.  The likelihood of drawing two identical assignment vectors for a large dataset is
+                          probably very small to begin with.
+
+        :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
+                 hypothetical assignment
         """
 
         assert 0 < treatment_assignment_probability < 1, "Treatment assignment probabilities must be great than 0 and less than 1. Received {0}".format(treatment_assignment_probability)
 
-        # This is not efficient. This will eat a lot of memory when the number of permutations goes above a few thousand
         sim_dict = self.make_hypothetical_assignment(df_=df_, treatment_assignment_probability=treatment_assignment_probability, test_statistic_function=test_statistic_function, num_perms=num_perms, sample_with_replacement=sample_with_replacement)
-
-        # sim_dict = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignment_dict=assignment_dict)
 
         return sim_dict
 
     def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None):
         """
+        Function to handle running randomization inference on a two variant AB test. The point is to use randomization inference to test the hypothesis of the experiment.  The
+        function here breaks up the randomization inference process into 5 steps:
 
-        :param df:
-        :param sharp_null_type:
-        :param sharp_null_value:
-        :param test_statistic:
-        :param treatment_assignment_probability:
-        :param outcome_column_name:
-        :param treatment_column_name:
-        :param treatment_name:
-        :param control_name:
-        :param num_permutations:
-        :param alternative:
-        :param confidence:
-        :param sample_with_replacement:
-        :param filename:
-        :param output_path:
-        :return:
+        1. Implement a selected sharp null hypothesis
+
+        2. Pick a test statistic. We have a list of pre-built ones, otherwise a function must be supplied. This function must consume a DataFrame and return a single scalar value
+
+        3. Select a randomization procedure. Currently, this only supports random assignment via a (possible non 50/50) coin flip
+
+        4. Calculate the test p-value
+
+        5. Calculate confidence interval. This is the CI of the test statistic under the null. Only a very simple pivotal approach is supported currently
+
+        The final results are output as a figure which plots the hypothetical null distribution for the test statistic, the 95% confidence interval of the observed test statistic
+        under the null distribution, and the p-value of the test.
+
+        :param df: DataFrame contain unit assignments and observed outcomes from a two variant experiment. Each row should correspond to the outcome for a unique unit
+        :param sharp_null_type: Either additive or multiplicative. Additive will add a constant value to the observed outcomes. Multiplicative will scale the observed outcomes by
+                                a percentage factors.
+        :param sharp_null_value: The value you want use for the sharp null. This is the value you want to use as the individual level impact of the treatment. Fisher's sharp null
+                                 (i.e. no individual impact at all) would have this as zero.
+        :param test_statistic: This is a dictionary. The key is either a string () indicating that you want to use one of the pre-built test statistic functions, or a function that
+                               accepts a dataframe and outputs a scalar. The value is another dictionary on parameters you'd like to pass to the test statistic function. You can
+                               leave this as an empty dictionary {} or as None if you don't want to pass any parameters.
+        :param treatment_assignment_probability: The probability of being assigned to the treatment group. Must be positive and less than 1.
+        :param outcome_column_name: Name of the column in the input DataFrame which has the observed outcomes
+        :param treatment_column_name: Name of the column in input DataFrame which contains the treatment assignments
+        :param treatment_name: Name of the treatment variant in the input DataFrame
+        :param control_name: Name of the control variant in the input DataFrame
+        :param num_permutations: Number of hypothetical assignments to draw. The default is 1000, but more may be required.  Note that setting sample_with_replacement will make
+                                 running more permutations much faster than requiring that each be unique.  The likelihood of drawing two identical assignment vectors for a large
+                                 dataset is probably very small to begin with.
+        :param alternative: Alternative for calculating the p-value. i.e. a two-sided vs one-sided test.
+        :param confidence: Confidence level of the test (e.g. 0.95 for a 95% confidence level)
+        :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
+                                        be sampled.
+        :param filename: Name of the file you want to save the output plot to.  This is optional. If you leave this out, the file name will default to
+                         experimental_analysis_CURRENT_DATETIME.png
+        :param output_path: Path to the directory where you want to save the output plot. If left out, this will default to the current working directory
+
+        :return: Nothing. Generates a png file with a plot summarizing the results of the comparison
         """
 
         assert sharp_null_type in ['additive', 'multiplicative'], "only additive or multiplicative sharp nulls are supported. Received {0}".format(sharp_null_type)
