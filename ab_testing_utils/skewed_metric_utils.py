@@ -381,7 +381,6 @@ class RandomizationInference:
         df_for_ranking['rejection'] = df_for_ranking['rank'] / df_for_ranking.shape[0]
         rejection_edge = df_for_ranking.loc[(df_for_ranking['rejection'] <= (1 - confidence))]['rejection'].max()
         rejection_edge_values = df_for_ranking.loc[(df_for_ranking['rejection'] == rejection_edge)]
-        print(rejection_edge_values)
 
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.histplot(data=self.df_sims, x='test_statistic', fill=True, ax=ax, kde=True, label='Null distribution')
