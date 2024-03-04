@@ -265,7 +265,7 @@ class RandomizationInference:
             n_combs = np.inf
 
         if n_combs <= 1000:
-            print('Found {0} distinct assignment combinations. All combinations will be simulated.')
+            print('Found {0} distinct assignment combinations. All combinations will be simulated.'.format(n_combs))
             # Just get all possible assignment combinations. This should be small enough to handle in memory
             assignment_dict = self.get_all_combinations(size=df_.shape[0], treatment_probability=treatment_assignment_probability)
             for i, comb in tqdm(assignment_dict.items()):
