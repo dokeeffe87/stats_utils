@@ -28,6 +28,7 @@ import math
 import itertools
 import warnings
 import functools
+# import matplotlib as mpl
 
 from matplotlib import style
 from functools import partial
@@ -35,6 +36,7 @@ from time import gmtime, strftime
 from typing import Union
 from tqdm import tqdm
 from collections import namedtuple
+import matplotlib.ticker as mtick
 
 warnings.filterwarnings('ignore')
 
@@ -533,11 +535,11 @@ class RandomizationInference:
     def calculate_mde(self, df, weeks, expected_weekly_sample_size, test_statistic_function, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8):
         # TODO: add type hints
         # TODO: add docstring
-        num_to_sample = weeks * expected_weekly_sample_size
+        num_to_sample = int(weeks * expected_weekly_sample_size)
         df_sample = df.sample(num_to_sample)
 
         # define return type
-        fields = ['weeks', 'days', 'total_sample_size', 'mde']
+        fields = ['weeks', 'days', 'total_sample_size', 'mde', 'critical_point', 'simulated_effect_size_beta_percentile']
         mde_nt = namedtuple('mde', fields)
 
         # Determine the desired level of significance
@@ -568,8 +570,165 @@ class RandomizationInference:
         # This is the minimum detectable effect size
         mde_ = critical_point_ri - simulated_effect_size_qth_percentile
 
-        return mde_nt(weeks=weeks, days=weeks * 7, total_sample_size=num_to_sample, mde=mde_)
+        return mde_nt(weeks=weeks, days=weeks * 7, total_sample_size=num_to_sample, mde=mde_, critical_point=critical_point_ri, simulated_effect_size_beta_percentile=simulated_effect_size_qth_percentile)
 
-    def power_calculation(self):
-        pass
-    
+    def power_calculation(self, df, expected_4_week_sample_size, min_weeks, max_weeks, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, filename=None, output_path=None, figsize=(12, 8)):
+
+        # We assume that the dataset we have is historical:
+
+        # 1. Use randomization inference to generate a null distribution
+
+        # 2. Shift the null to get the right power for the "alternate"
+
+        # 3. The shift amount is the minimum detectable effect size
+
+        # 4. Repeat using historical samples of different sizes
+
+        # 5. Map sample size to expected run time given baseline number of daily observations (roll up to weeks)
+
+        # 6. Map run time --> minimum detectable effect size:
+
+        assert sharp_null_type in ['additive', 'multiplicative'], "only additive or multiplicative sharp nulls are supported. Received {0}".format(sharp_null_type)
+
+        assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
+
+        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {0}".format(alternative)
+
+        # We need to make sure we have enough data to support the min and max weeks desired runtime
+        num_historical_units = df.shape[0]
+        expected_weekly_sample_size = expected_4_week_sample_size / 4
+        expected_daily_sample_size = expected_weekly_sample_size / 7
+
+        assert expected_weekly_sample_size * min_weeks < num_historical_units, "Insufficient historical data for a minimum runtime of {0} weeks".format(min_weeks)
+        assert expected_weekly_sample_size * max_weeks <= num_historical_units, "Insufficient historical data for a maximum runtime of {0} weeks".format(max_weeks)
+
+        # Copy the input DataFrame so that we don't modify the original data in_place
+        df_ = df.copy()
+
+        # Save the input test statistic name if it's a string
+        if type(test_statistic['function']) == str:
+            test_stat_name = test_statistic['function'].replace('_', ' ')
+        else:
+            test_stat_name = 'custom test statistic'
+
+        # Step 1: implement the selected sharp null
+        df_ = self.sharp_null(df_=df_, sharp_null_type=sharp_null_type, sharp_null_value=sharp_null_value, outcome_column_name=outcome_column_name)
+
+        # Step 2: pick a test statistic. We have a list of pre-built ones, otherwise a function must be supplied
+        # This function must consume a DataFrame and return a single scalar value
+        test_statistic_function = self.select_test_statistic(test_statistic=test_statistic)
+
+        effect_size_dict = {'weeks': [], 'days': [], 'total_sample_size': [], 'mde': [], 'critical_point': [], 'simulated_effect_size_beta_percentile': []}
+        for weeks_ in tqdm(range(min_weeks, max_weeks + 1)):
+            mde_nt = self.calculate_mde(df=df_,
+                                        weeks=weeks_,
+                                        expected_weekly_sample_size=expected_weekly_sample_size,
+                                        test_statistic_function=test_statistic_function,
+                                        sharp_null_type=sharp_null_type,
+                                        sharp_null_value=sharp_null_value,
+                                        treatment_assignment_probability=treatment_assignment_probability,
+                                        outcome_column_name=outcome_column_name,
+                                        num_permutations=num_permutations,
+                                        alternative=alternative,
+                                        sample_with_replacement=sample_with_replacement,
+                                        alpha=alpha,
+                                        power=power)
+
+            for key, list_ in effect_size_dict.items():
+                list_.append(mde_nt._asdict()[key])
+
+        df_mde = df_mde = pd.DataFrame.from_dict(effect_size_dict)
+
+        # Plot the return output
+        self.plot_power_results(df=df_mde,
+                                min_weeks=min_weeks,
+                                max_weeks=max_weeks,
+                                stat_name=test_stat_name,
+                                save_path=output_path,
+                                output_filename=filename,
+                                figsize=figsize)
+
+        return df_mde
+
+    @staticmethod
+    def format_y_axis(x: float, pos) -> str:
+        """
+        Helper function to format the y-axis of the MDE vs runtime plot.
+
+        :param x: A number used as a tick on a matplotlib plot that you want to format
+        :param pos: This is a position indicator used internally by matplotlib to figure out where to plot the tick. You should never have to interact with it directly.
+
+        :return: The formatted tick mark
+        """
+
+        return f"{int(x):,}"
+
+    @staticmethod
+    def plot_mde_marker(df: pd.DataFrame, weeks: int, days: int, ax):
+        """
+        Function to format the minimum detectable effect size plot.  This will add horizontal lines to indicate the required number of weeks, as well as annotate the plot to
+        indicate the minimum detectable effect size at the desired level of significance and power.
+
+        :param df: A DataFrame with experimental runtime and minimum detectable effect sizes.  This should be the output of the create_mde_table method.
+        :param weeks: The number of weeks for one particular instance of the experiment, at a given level of significance, power, and effect size
+        :param days: The number of days for one particular instance of the experiment, at a given level of significance, power, and effect size
+        :param ax: The matplotlib ax object for the overall plot. Generated by the make_mde_plot function
+
+        :return: Nothing. Just adds formatting to the existing plot object
+        """
+        # TODO: Add view into what ranges of effect will not be distinguishable from the baseline (i.e. the rejection region)
+
+        ax.axhline(y=days, linestyle='--', xmax=(df[df['days'] <= days]['mde'].min() - ax.get_xlim()[0]) / ax.get_xlim()[1] - 0.005)
+
+        if weeks > 1:
+            week_text = 'weeks'
+        else:
+            week_text = 'week'
+
+        ax.text(ax.get_xlim()[0], days + 1, f"{weeks} {week_text}", horizontalalignment='left')
+
+        mde_text = "MDE = {0}".format(np.round(df[df['weeks'] == weeks]['mde'].min(), 3))
+
+        ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
+
+    def plot_power_results(self, df, min_weeks, max_weeks, stat_name, save_path, output_filename, figsize=(12, 8)):
+
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot("mde", 'days', data=df, linewidth=2, solid_capstyle="round", linestyle='--', marker='o', color='b')
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(self.format_y_axis))
+        ax.set_xlabel('Minimum detectable effect size for: {0}'.format(stat_name))
+        ax.set_ylabel('')
+        x_limit = df[df["weeks"] <= min_weeks]["mde"].min() * 1.2
+        x_min = df[df['weeks'] == max_weeks]['mde'].min()
+        x_min = x_min - 0.1 * x_min
+        ax.set_xlim([x_min, x_limit])
+
+        for weeks in range(min_weeks, max_weeks + 1):
+            days_ = df.query('weeks == {0}'.format(weeks))['days'].min()
+            self.plot_mde_marker(df=df, weeks=weeks, days=days_, ax=ax)
+
+        ax.set_title('Experiment run times by minimum detectable effect size', fontsize=20)
+
+        # We don't need the y-axis here
+        ax.axes.get_yaxis().set_visible(False)
+
+        ax.yaxis.grid(True)
+        ax.spines["left"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+
+        if save_path is None:
+            save_path = os.getcwd()
+
+        if output_filename is None:
+            file_name = 'experiment_runtime_vs_mde_{0}.png'.format(current_time)
+        else:
+            if not output_filename.endswith('.png'):
+                file_name = output_filename + '.png'
+            else:
+                file_name = output_filename
+
+        save_path = os.path.join(save_path, file_name)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
