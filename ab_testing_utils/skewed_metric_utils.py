@@ -34,6 +34,7 @@ from functools import partial
 from time import gmtime, strftime
 from typing import Union
 from tqdm import tqdm
+from collections import namedtuple
 
 warnings.filterwarnings('ignore')
 
@@ -486,7 +487,7 @@ class RandomizationInference:
 
         :return: Nothing. Generates a png file with a plot summarizing the results of the comparison
         """
-
+        # TODO: add type hints
         assert sharp_null_type in ['additive', 'multiplicative'], "only additive or multiplicative sharp nulls are supported. Received {0}".format(sharp_null_type)
 
         assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
@@ -528,3 +529,47 @@ class RandomizationInference:
 
         # final output. This should be summarized in a plot
         self.plot_and_output_results(confidence=confidence, alternative=alternative, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
+
+    def calculate_mde(self, df, weeks, expected_weekly_sample_size, test_statistic_function, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8):
+        # TODO: add type hints
+        # TODO: add docstring
+        num_to_sample = weeks * expected_weekly_sample_size
+        df_sample = df.sample(num_to_sample)
+
+        # define return type
+        fields = ['weeks', 'days', 'total_sample_size', 'mde']
+        mde_nt = namedtuple('mde', fields)
+
+        # Determine the desired level of significance
+        if alternative == 'two-sided':
+            q_significance = 1 - alpha/2
+        else:
+            q_significance = 1 - alpha
+
+        sim_dict = self.run_randomization_inference(df_=df_sample,
+                                                    test_statistic_function=test_statistic_function,
+                                                    treatment_assignment_probability=treatment_assignment_probability,
+                                                    num_perms=num_permutations,
+                                                    sample_with_replacement=sample_with_replacement)
+
+        df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
+        df_sims = df_sims.reset_index()
+        df_sims.columns = ['permutation', 'test_statistic']
+
+        # Establish the critical value for significance
+        critical_point_ri = np.quantile(df_sims['test_statistic'].values, q_significance)
+
+        # Set the quantile for power calculation:
+        q_ = 100 - power * 100
+
+        simulated_effect_size_qth_percentile = np.percentile(df_sims['test_statistic'].values, q_)
+
+        # Shift the null distribution over so that 80% of its mass is to the right of the critical value.
+        # This is the minimum detectable effect size
+        mde_ = critical_point_ri - simulated_effect_size_qth_percentile
+
+        return mde_nt(weeks=weeks, days=weeks * 7, total_sample_size=num_to_sample, mde=mde_)
+
+    def power_calculation(self):
+        pass
+    
