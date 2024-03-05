@@ -573,7 +573,8 @@ class RandomizationInference:
         return mde_nt(weeks=weeks, days=weeks * 7, total_sample_size=num_to_sample, mde=mde_, critical_point=critical_point_ri, simulated_effect_size_beta_percentile=simulated_effect_size_qth_percentile)
 
     def power_calculation(self, df, expected_4_week_sample_size, min_weeks, max_weeks, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, filename=None, output_path=None, figsize=(12, 8)):
-
+        # TODO: add type hints
+        # TODO: add docstring
         # We assume that the dataset we have is historical:
 
         # 1. Use randomization inference to generate a null distribution
@@ -692,14 +693,19 @@ class RandomizationInference:
         ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
 
     def plot_power_results(self, df, min_weeks, max_weeks, stat_name, save_path, output_filename, figsize=(12, 8)):
-
+        # TODO: add type hints
+        # TODO: add docstring
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
         fig, ax = plt.subplots(figsize=figsize)
+
         ax.plot("mde", 'days', data=df, linewidth=2, solid_capstyle="round", linestyle='--', marker='o', color='b')
+
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(self.format_y_axis))
+
         ax.set_xlabel('Minimum detectable effect size for: {0}'.format(stat_name))
         ax.set_ylabel('')
+
         x_limit = df[df["weeks"] <= min_weeks]["mde"].min() * 1.2
         x_min = df[df['weeks'] == max_weeks]['mde'].min()
         x_min = x_min - 0.1 * x_min
