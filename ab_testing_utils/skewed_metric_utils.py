@@ -16,6 +16,7 @@ V1.0.0
 """
 
 # import packages
+import datetime
 import os
 # import sys
 import numpy as np
@@ -127,6 +128,8 @@ class RandomizationInference:
         self._supported_test_statistics = {'difference_in_means': ri_test_statistic_difference_in_means,
                                            'difference_in_percentiles': ri_test_statistic_difference_in_percentiles,
                                            'difference_in_ks_statistic': ri_test_statistic_difference_in_ks}
+        self._supported_alternatives = ['two-sided', 'greater', 'less']
+        self._supported_sample_methods = ['simple', 'weekly']
         # self._supported_ci_methods = ['percentile', 'pivotal']
         self.df_sims = None
         self.observed_test_statistic = None
@@ -494,7 +497,7 @@ class RandomizationInference:
 
         assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
 
-        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {0}".format(alternative)
+        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {1}".format(self._supported_alternatives, alternative)
 
         # Copy the input DataFrame so that we don't modify the original data in_place
         df_ = df.copy()
@@ -532,11 +535,18 @@ class RandomizationInference:
         # final output. This should be summarized in a plot
         self.plot_and_output_results(confidence=confidence, alternative=alternative, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
 
-    def calculate_mde(self, df, weeks, expected_weekly_sample_size, test_statistic_function, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8):
+    def calculate_mde(self, df, weeks, expected_weekly_sample_size, test_statistic_function, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8):
         # TODO: add type hints
         # TODO: add docstring
-        num_to_sample = int(weeks * expected_weekly_sample_size)
-        df_sample = df.sample(num_to_sample)
+        if sample_method == 'simple':
+            num_to_sample = int(weeks * expected_weekly_sample_size)
+            df_sample = df.sample(num_to_sample)
+        elif sample_method == 'weekly':
+            assert date_column is not None, "weekly sampling method requires a date column"
+            end_date = df[date_column].max()
+            start_date = end_date - datetime.timedelta(weeks=weeks)
+            df_sample = df.loc[(df[date_column] <= end_date) & (df[date_column] >= start_date)]
+            num_to_sample = df_sample.shape[0]
 
         # define return type
         fields = ['weeks', 'days', 'total_sample_size', 'mde', 'critical_point', 'simulated_effect_size_beta_percentile']
@@ -572,7 +582,7 @@ class RandomizationInference:
 
         return mde_nt(weeks=weeks, days=weeks * 7, total_sample_size=num_to_sample, mde=mde_, critical_point=critical_point_ri, simulated_effect_size_beta_percentile=simulated_effect_size_qth_percentile)
 
-    def power_calculation(self, df, expected_4_week_sample_size, min_weeks, max_weeks, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, filename=None, output_path=None, figsize=(12, 8)):
+    def power_calculation(self, df, expected_4_week_sample_size, min_weeks, max_weeks, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, filename=None, output_path=None, figsize=(12, 8)):
         # TODO: add type hints
         # TODO: add docstring
         # TODO: Add support for calculating a relative percent lift over the control group for the test statistic. Not sure I can automate this, but can at least accept an input value
@@ -594,15 +604,20 @@ class RandomizationInference:
 
         assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
 
-        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {0}".format(alternative)
+        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {1}".format(self._supported_alternatives, alternative)
+
+        assert sample_method in ['simple', 'weekly'], "Only {0} sampling methods are supported. Received {1}".format(self._supported_sample_methods, sample_method)
 
         # We need to make sure we have enough data to support the min and max weeks desired runtime
-        num_historical_units = df.shape[0]
-        expected_weekly_sample_size = expected_4_week_sample_size / 4
-        expected_daily_sample_size = expected_weekly_sample_size / 7
+        if sample_method == 'simple':
+            num_historical_units = df.shape[0]
+            expected_weekly_sample_size = expected_4_week_sample_size / 4
 
-        assert expected_weekly_sample_size * min_weeks < num_historical_units, "Insufficient historical data for a minimum runtime of {0} weeks".format(min_weeks)
-        assert expected_weekly_sample_size * max_weeks <= num_historical_units, "Insufficient historical data for a maximum runtime of {0} weeks".format(max_weeks)
+            assert expected_weekly_sample_size * min_weeks < num_historical_units, "Insufficient historical data for a minimum runtime of {0} weeks".format(min_weeks)
+            assert expected_weekly_sample_size * max_weeks <= num_historical_units, "Insufficient historical data for a maximum runtime of {0} weeks".format(max_weeks)
+        else:
+            expected_weekly_sample_size = None
+        # TODO: Add additional check for weekly sampling method
 
         # Copy the input DataFrame so that we don't modify the original data in_place
         df_ = df.copy()
@@ -624,6 +639,8 @@ class RandomizationInference:
         for weeks_ in tqdm(range(min_weeks, max_weeks + 1)):
             mde_nt = self.calculate_mde(df=df_,
                                         weeks=weeks_,
+                                        sample_method=sample_method,
+                                        date_column=date_column,
                                         expected_weekly_sample_size=expected_weekly_sample_size,
                                         test_statistic_function=test_statistic_function,
                                         sharp_null_type=sharp_null_type,
