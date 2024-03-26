@@ -568,6 +568,7 @@ class RandomizationInference:
         df_sims = df_sims.reset_index()
         df_sims.columns = ['permutation', 'test_statistic']
 
+        # TODO: add measurements from the null distributions. We want, at a minimum, to record the median and the 2.5th and 97.5th percentiless
         # Establish the critical value for significance
         critical_point_ri = np.quantile(df_sims['test_statistic'].values, q_significance)
 
@@ -637,6 +638,7 @@ class RandomizationInference:
 
         effect_size_dict = {'weeks': [], 'days': [], 'total_sample_size': [], 'mde': [], 'critical_point': [], 'simulated_effect_size_beta_percentile': []}
         for weeks_ in tqdm(range(min_weeks, max_weeks + 1)):
+            # TODO make a date windowed version of the belows
             mde_nt = self.calculate_mde(df=df_,
                                         weeks=weeks_,
                                         sample_method=sample_method,
