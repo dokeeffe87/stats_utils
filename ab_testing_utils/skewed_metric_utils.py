@@ -294,15 +294,32 @@ class RandomizationInference:
                         pbar.update(1)
                 pbar.close()
             else:
+                def run_assignment(iteration_, df_, treatment_assignment_probability, test_statistic_function):
+                    assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
+                    result_ = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                    return {iteration_, result_}
+
                 if self.use_multiprocessing:
-                    for i in range(num_perms):
-                        # TODO: move multiprocessing to here. I think this will be better to package up into a function and run
-                        assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
-                        sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                    arg_dict = {'df_': df_, 'treatment_assignment_probability': treatment_assignment_probability, 'test_statistic_function': test_statistic_function}
+                    with multiprocess.Pool(processes=multiprocess.cpu_count()) as pool:
+                        func_ = partial(run_assignment, **arg_dict)
+                        res_object = tqdm(pool.imap(func_, list(range(num_perms))), total=num_perms, mininterval=1)
+                        res_vals = list(res_object)
+
+                    sim_dict = dict(ChainMap(*res_vals))
                 else:
                     for i in tqdm(range(num_perms)):
                         assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
                         sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                # if self.use_multiprocessing:
+                #     for i in range(num_perms):
+                #         # TODO: move multiprocessing to here. I think this will be better to package up into a function and run
+                #         assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
+                #         sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                # else:
+                #     for i in tqdm(range(num_perms)):
+                #         assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
+                #         sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
 
         return sim_dict
 
@@ -582,25 +599,32 @@ class RandomizationInference:
         # TODO: Parallelize this
         # Be very careful, this won't actually work unless with sample with replacement. Otherwise, we risk repeats...
         # if sample_with_replacement:
-        if self.use_multiprocessing:
-            with multiprocess.Pool(processes=4) as pool:
-                func_ = partial(self.run_randomization_inference,
-                                **{'df_': df_sample,
-                                   'test_statistic_function': test_statistic_function,
-                                   'treatment_assignment_probability': treatment_assignment_probability,
-                                   'sample_with_replacement': sample_with_replacement})
-                res_object = tqdm(pool.imap(func_, list(range(num_permutations))), total=num_permutations, mininterval=1)
+        # if self.use_multiprocessing:
+        #     with multiprocess.Pool(processes=4) as pool:
+        #         func_ = partial(self.run_randomization_inference,
+        #                         **{'df_': df_sample,
+        #                            'test_statistic_function': test_statistic_function,
+        #                            'treatment_assignment_probability': treatment_assignment_probability,
+        #                            'sample_with_replacement': sample_with_replacement})
+        #         res_object = tqdm(pool.imap(func_, list(range(num_permutations))), total=num_permutations, mininterval=1)
+        #
+        #         # This should be a list of dictionaries
+        #         res_vals = list(res_object)
+        #
+        #     sim_dict = dict(ChainMap(*res_vals))
+        # else:
+        #     sim_dict = self.run_randomization_inference(df_=df_sample,
+        #                                                 test_statistic_function=test_statistic_function,
+        #                                                 treatment_assignment_probability=treatment_assignment_probability,
+        #                                                 num_perms=num_permutations,
+        #                                                 sample_with_replacement=sample_with_replacement)
 
-                # This should be a list of dictionaries
-                res_vals = list(res_object)
-
-            sim_dict = dict(ChainMap(*res_vals))
-        else:
-            sim_dict = self.run_randomization_inference(df_=df_sample,
-                                                        test_statistic_function=test_statistic_function,
-                                                        treatment_assignment_probability=treatment_assignment_probability,
-                                                        num_perms=num_permutations,
-                                                        sample_with_replacement=sample_with_replacement)
+        # TODO: Experiment here with moving the multiprocessing upstream
+        sim_dict = self.run_randomization_inference(df_=df_sample,
+                                                    test_statistic_function=test_statistic_function,
+                                                    treatment_assignment_probability=treatment_assignment_probability,
+                                                    num_perms=num_permutations,
+                                                    sample_with_replacement=sample_with_replacement)
 
         df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
         df_sims = df_sims.reset_index()
