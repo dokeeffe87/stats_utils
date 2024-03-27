@@ -296,6 +296,7 @@ class RandomizationInference:
             else:
                 if self.use_multiprocessing:
                     for i in range(num_perms):
+                        # TODO: move multiprocessing to here. I think this will be better to package up into a function and run
                         assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
                         sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
                 else:
