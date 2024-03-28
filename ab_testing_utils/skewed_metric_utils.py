@@ -62,8 +62,11 @@ def ri_test_statistic_difference_in_means(df: pd.DataFrame, outcome_col: str, tr
     :return: Difference in means
     """
 
-    sdo = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].mean(numeric_only=True) - df.query("{0}==@control_name".format(treatment_col))[
-        outcome_col].mean(numeric_only=True)
+    # TODO: can we speed this up with loc instead?
+    # sdo = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].mean(numeric_only=True) - df.query("{0}==@control_name".format(treatment_col))[
+    #     outcome_col].mean(numeric_only=True)
+
+    sdo = df.loc[(df[treatment_col] == treatment_name)][outcome_col].mean() - df.loc[(df[treatment_col] == control_name)][outcome_col].mean()
 
     return sdo
 
@@ -267,12 +270,14 @@ class RandomizationInference:
         # set the random seed
         np.random.seed()
 
-        try:
-            n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
-        except ValueError:
-            n_combs = np.inf
-
-        if n_combs <= 1000:
+        # TODO: This is the bottleneck! Make this optional.
+        # try:
+        #     n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
+        # except ValueError:
+        #     n_combs = np.inf
+        n_combs = -1
+        # if n_combs <= 1000:
+        if n_combs > 0:
             print('Found {0} distinct assignment combinations. All combinations will be simulated.'.format(n_combs))
             # Just get all possible assignment combinations. This should be small enough to handle in memory
             assignment_dict = self.get_all_combinations(size=df_.shape[0], treatment_probability=treatment_assignment_probability)
@@ -297,7 +302,7 @@ class RandomizationInference:
                 def run_assignment(iteration_, df_, treatment_assignment_probability, test_statistic_function):
                     assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
                     result_ = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
-                    return {iteration_, result_}
+                    return {iteration_: result_}
 
                 if self.use_multiprocessing:
                     arg_dict = {'df_': df_, 'treatment_assignment_probability': treatment_assignment_probability, 'test_statistic_function': test_statistic_function}
@@ -686,6 +691,9 @@ class RandomizationInference:
         assert sample_method in ['simple', 'weekly', 'windowed_weekly_sample'], "Only {0} sampling methods are supported. Received {1}".format(self._supported_sample_methods, sample_method)
 
         self.use_multiprocessing = use_multiprocessing
+
+        if self.use_multiprocessing and not sample_with_replacement:
+            raise ValueError("multiprocessing only supported for sampling with replacement")
 
         # We need to make sure we have enough data to support the min and max weeks desired runtime
         if sample_method == 'simple':
