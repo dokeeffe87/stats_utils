@@ -35,7 +35,7 @@ import multiprocess
 from matplotlib import style
 from functools import partial
 from time import gmtime, strftime
-from typing import Union
+from typing import Union, Optional
 from tqdm.notebook import tqdm
 from collections import namedtuple, ChainMap
 import matplotlib.ticker as mtick
@@ -62,10 +62,6 @@ def ri_test_statistic_difference_in_means(df: pd.DataFrame, outcome_col: str, tr
     :return: Difference in means
     """
 
-    # TODO: can we speed this up with loc instead?
-    # sdo = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].mean(numeric_only=True) - df.query("{0}==@control_name".format(treatment_col))[
-    #     outcome_col].mean(numeric_only=True)
-
     sdo = df.loc[(df[treatment_col] == treatment_name)][outcome_col].mean() - df.loc[(df[treatment_col] == control_name)][outcome_col].mean()
 
     return sdo
@@ -86,7 +82,7 @@ def ri_test_statistic_difference_in_ks(df: pd.DataFrame, outcome_col: str, treat
 
     :return: KS statistic
     """
-
+    # TODO: convert to loc
     ks_ = stats.ks_2samp(
         df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].values,
         df.query("{0}==@control_name".format(treatment_col))[outcome_col].values, alternative=alternative)
@@ -108,7 +104,7 @@ def ri_test_statistic_difference_in_percentiles(df: pd.DataFrame, outcome_col: s
 
     :return: Difference in percentiles
     """
-
+    # TODO: convert to loc
     q_diff = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].quantile(q=quantile) - df.query("{0}==@control_name".format(treatment_col))[
         outcome_col].quantile(q=quantile)
 
@@ -240,7 +236,7 @@ class RandomizationInference:
 
         return hypothetical_assignments
 
-    def make_hypothetical_assignment(self, df_: pd.DataFrame, treatment_assignment_probability: float, test_statistic_function: functools.partial, sample_with_replacement: bool, num_perms: int = 1000) -> dict:
+    def make_hypothetical_assignment(self, df_: pd.DataFrame, treatment_assignment_probability: float, test_statistic_function: functools.partial, sample_with_replacement: bool, num_perms: int = 1000, try_distinct_perms: bool = False, chunksize: Union[int, None] = None) -> dict:
         """
         Function to make hypothetical assignments and manage the calculation of test statistics for each assignment.  Currently, this only supports simple assignments via a
         (possibly not 50/50) coin flip.  Also, only two variants are supported at the moment. There are two supported methodologies:
@@ -258,6 +254,8 @@ class RandomizationInference:
         :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
                                         be sampled.
         :param num_perms: Number of hypothetical assignments to draw
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
+        :param chunksize: Optional integer. The chunksize parameter to pass to multiprocessing imap. Only used is use_multiprocessing is true.
 
         :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
                  hypothetical assignment
@@ -271,13 +269,14 @@ class RandomizationInference:
         np.random.seed()
 
         # TODO: This is the bottleneck! Make this optional.
-        # try:
-        #     n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
-        # except ValueError:
-        #     n_combs = np.inf
-        n_combs = -1
-        # if n_combs <= 1000:
-        if n_combs > 0:
+        if try_distinct_perms:
+            try:
+                n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
+            except ValueError:
+                n_combs = np.inf
+        else:
+            n_combs = np.inf
+        if n_combs <= 1000:
             print('Found {0} distinct assignment combinations. All combinations will be simulated.'.format(n_combs))
             # Just get all possible assignment combinations. This should be small enough to handle in memory
             assignment_dict = self.get_all_combinations(size=df_.shape[0], treatment_probability=treatment_assignment_probability)
@@ -309,7 +308,7 @@ class RandomizationInference:
                     with multiprocess.Pool(processes=multiprocess.cpu_count()) as pool:
                         func_ = partial(run_assignment, **arg_dict)
                         # TODO: Make the chunksize customizable
-                        res_object = tqdm(pool.imap(func_, list(range(num_perms)), chunksize=100), total=num_perms, mininterval=1)
+                        res_object = tqdm(pool.imap(func_, list(range(num_perms)), chunksize=chunksize), total=num_perms, mininterval=1)
                         res_vals = list(res_object)
 
                     sim_dict = dict(ChainMap(*res_vals))
@@ -449,7 +448,7 @@ class RandomizationInference:
 
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
 
-    def run_randomization_inference(self, num_perms: int, df_: pd.DataFrame, test_statistic_function: functools.partial, treatment_assignment_probability: float, sample_with_replacement: bool) -> dict:
+    def run_randomization_inference(self, num_perms: int, df_: pd.DataFrame, test_statistic_function: functools.partial, treatment_assignment_probability: float, sample_with_replacement: bool, try_distinct_perms: bool, chunksize: int) -> dict:
         """
         Function to handle running the randomization inference step. This just collects the results from make_hypothetical_assignments. We can probably remove this in future
         versions
@@ -462,6 +461,8 @@ class RandomizationInference:
         :param num_perms: Number of hypothetical assignments to draw. The default is 1000, but more may be required.  Note that setting sample_with_replacement will make running
                           more permutations much faster than requiring that each be unique.  The likelihood of drawing two identical assignment vectors for a large dataset is
                           probably very small to begin with.
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
+        :param chunksize: Optional integer. The chunksize parameter to pass to multiprocessing imap. Only used is use_multiprocessing is true.
 
         :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
                  hypothetical assignment
@@ -469,11 +470,11 @@ class RandomizationInference:
 
         assert 0 < treatment_assignment_probability < 1, "Treatment assignment probabilities must be great than 0 and less than 1. Received {0}".format(treatment_assignment_probability)
 
-        sim_dict = self.make_hypothetical_assignment(df_=df_, treatment_assignment_probability=treatment_assignment_probability, test_statistic_function=test_statistic_function, num_perms=num_perms, sample_with_replacement=sample_with_replacement)
+        sim_dict = self.make_hypothetical_assignment(df_=df_, treatment_assignment_probability=treatment_assignment_probability, test_statistic_function=test_statistic_function, num_perms=num_perms, sample_with_replacement=sample_with_replacement, try_distinct_perms=try_distinct_perms, chunksize=chunksize)
 
         return sim_dict
 
-    def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None):
+    def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None, try_distinct_perms=False):
         """
         Function to handle running randomization inference on a two variant AB test. The point is to use randomization inference to test the hypothesis of the experiment.  The
         function here breaks up the randomization inference process into 4 steps:
@@ -508,6 +509,7 @@ class RandomizationInference:
         :param confidence: Confidence level of the test (e.g. 0.95 for a 95% confidence level)
         :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
                                         be sampled.
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
         :param filename: Name of the file you want to save the output plot to.  This is optional. If you leave this out, the file name will default to
                          experimental_analysis_CURRENT_DATETIME.png
         :param output_path: Path to the directory where you want to save the output plot. If left out, this will default to the current working directory
@@ -542,7 +544,7 @@ class RandomizationInference:
         # Also run the simulations
         # print('Running {0} permutations'.format(num_permutations))
         print('Running randomization inference...')
-        sim_dict = self.run_randomization_inference(df_=df_, test_statistic_function=test_statistic_function, treatment_assignment_probability=treatment_assignment_probability, num_perms=num_permutations, sample_with_replacement=sample_with_replacement)
+        sim_dict = self.run_randomization_inference(df_=df_, test_statistic_function=test_statistic_function, treatment_assignment_probability=treatment_assignment_probability, num_perms=num_permutations, sample_with_replacement=sample_with_replacement, try_distinct_perms=try_distinct_perms, chunksize=None)
 
         self.df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
         self.df_sims = self.df_sims.reset_index()
@@ -557,7 +559,7 @@ class RandomizationInference:
         # final output. This should be summarized in a plot
         self.plot_and_output_results(confidence=confidence, alternative=alternative, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
 
-    def calculate_mde(self, df, weeks, test_statistic_function, expected_weekly_sample_size=None, date_tuple=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8):
+    def calculate_mde(self, df, weeks, test_statistic_function, expected_weekly_sample_size=None, date_tuple=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8, chunksize=None):
         # TODO: add type hints
         # TODO: add docstring
         if sample_method == 'simple':
@@ -593,35 +595,13 @@ class RandomizationInference:
         else:
             q_significance = 1 - alpha
 
-        # TODO: Parallelize this
-        # Be very careful, this won't actually work unless with sample with replacement. Otherwise, we risk repeats...
-        # if sample_with_replacement:
-        # if self.use_multiprocessing:
-        #     with multiprocess.Pool(processes=4) as pool:
-        #         func_ = partial(self.run_randomization_inference,
-        #                         **{'df_': df_sample,
-        #                            'test_statistic_function': test_statistic_function,
-        #                            'treatment_assignment_probability': treatment_assignment_probability,
-        #                            'sample_with_replacement': sample_with_replacement})
-        #         res_object = tqdm(pool.imap(func_, list(range(num_permutations))), total=num_permutations, mininterval=1)
-        #
-        #         # This should be a list of dictionaries
-        #         res_vals = list(res_object)
-        #
-        #     sim_dict = dict(ChainMap(*res_vals))
-        # else:
-        #     sim_dict = self.run_randomization_inference(df_=df_sample,
-        #                                                 test_statistic_function=test_statistic_function,
-        #                                                 treatment_assignment_probability=treatment_assignment_probability,
-        #                                                 num_perms=num_permutations,
-        #                                                 sample_with_replacement=sample_with_replacement)
-
-        # TODO: Experiment here with moving the multiprocessing upstream
         sim_dict = self.run_randomization_inference(df_=df_sample,
                                                     test_statistic_function=test_statistic_function,
                                                     treatment_assignment_probability=treatment_assignment_probability,
                                                     num_perms=num_permutations,
-                                                    sample_with_replacement=sample_with_replacement)
+                                                    sample_with_replacement=sample_with_replacement,
+                                                    try_distinct_perms=False,
+                                                    chunksize=chunksize)
 
         df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
         df_sims = df_sims.reset_index()
@@ -656,7 +636,7 @@ class RandomizationInference:
                       null_ci_low=null_ci_low,
                       null_ci_high=null_ci_high)
 
-    def power_calculation(self, df, min_weeks, max_weeks, expected_4_week_sample_size=None, start_date=None, end_date=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, use_multiprocessing=False, filename=None, output_path=None, figsize=(12, 8)):
+    def power_calculation(self, df, min_weeks, max_weeks, expected_4_week_sample_size=None, start_date=None, end_date=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, use_multiprocessing=False, chunksize=None, filename=None, output_path=None, figsize=(12, 8)):
         # TODO: add type hints
         # TODO: add docstring
         # TODO: Add support for calculating a relative percent lift over the control group for the test statistic. Not sure I can automate this, but can at least accept an input value
@@ -753,7 +733,8 @@ class RandomizationInference:
                                                 alternative=alternative,
                                                 sample_with_replacement=sample_with_replacement,
                                                 alpha=alpha,
-                                                power=power)
+                                                power=power,
+                                                chunksize=chunksize)
 
                     for key, list_ in effect_size_dict.items():
                         list_.append(mde_nt._asdict()[key])
@@ -772,7 +753,8 @@ class RandomizationInference:
                                             alternative=alternative,
                                             sample_with_replacement=sample_with_replacement,
                                             alpha=alpha,
-                                            power=power)
+                                            power=power,
+                                            chunksize=None)
 
             for key, list_ in effect_size_dict.items():
                 list_.append(mde_nt._asdict()[key])
