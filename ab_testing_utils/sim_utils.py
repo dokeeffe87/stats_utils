@@ -57,12 +57,17 @@ class SimulateABTest:
     @staticmethod
     def assign_randomly(df: pd.DataFrame, n_variants: int = 2, p_vals: Union[list, str, np.ndarray] = 'equal', group_col: str = 'group') -> pd.DataFrame:
         """
+        Function to simulate random assignment to n variant test.  Just uses a simple multinomial distribution to generate assignment vectors
 
-        :param df:
-        :param n_variants:
-        :param p_vals:
-        :param group_col:
-        :return:
+        :param df: DataFrame with historical (or simulated) assignments. Expected that each row represents on unit. Assignments will be stored in a DataFrame column called
+                   group_col (input variable).  By default, the "0" group will be control. All others will be labeled as treatment_i, where i represents the index past 0 in the
+                   p_vals iterable.
+
+        :param n_variants: Number of variants to assign
+        :param p_vals: Assignment probabilities to each variant. Must be iterable, or 'equal'. 'equal' just assumes that each variant has equal probability of assignment
+        :param group_col: Name for the column you want to contain the assignments in the output
+
+        :return: DataFrame with the variant assignments in the group_col column
         """
 
         df_ = df.copy()
@@ -87,11 +92,14 @@ class SimulateABTest:
     @staticmethod
     def generate_conversions(df: pd.DataFrame, conversion_rate_dict: dict, group_col: str = 'group') -> pd.DataFrame:
         """
+        Generates hypothetical conversion events. Conversion events are modeled by a binomial distribution.
 
-        :param df:
-        :param conversion_rate_dict:
-        :param group_col:
-        :return:
+        :param df: DataFrame where each row represents a unit. Must be labled by assignment group
+        :param conversion_rate_dict: A dictionary which contains the hypothetical conversion probabilities for each variant in the input DataFrame. The keys should be the variant
+                                     names, and the values the conversion probabolities
+        :param group_col: Name of the column in the input DataFrame which contains the group assignments
+
+        :return: A copy of the input DataFrame with a column called conversion. This will be a binary 0 or 1 representing non conversion or conversion, respectively.
         """
 
         df_ = df.copy()
@@ -108,13 +116,15 @@ class SimulateABTest:
 
     def run_sim(self, daily_num_observations: int, number_of_days_for_experiment: int, expected_conversion_rates: Union[list, np.ndarray], group_col: str, p_vals: Union[list, str, np.ndarray] = 'equal') -> pd.DataFrame:
         """
+        Helper function to run through each of the steps for generating a simulated conversion experiment
 
-        :param daily_num_observations:
-        :param number_of_days_for_experiment:
-        :param expected_conversion_rates:
-        :param group_col:
-        :param p_vals:
-        :return:
+        :param daily_num_observations: Integer average number of expected visitors per day
+        :param number_of_days_for_experiment: Integer number of days you want to simulate the experiment for
+        :param expected_conversion_rates: Iterable of expected conversion rates per variant. It's assumed that the first element is the expected conversion rate of the control group
+        :param p_vals: Assignment probabilities to each variant. Must be iterable, or 'equal'. 'equal' just assumes that each variant has equal probability of assignment
+        :param group_col: Name for the column you want to contain the assignments in the output
+
+        :return: DataFrame where each row represents an experiment unit. Contains assignment date, variant name, and whether the unit converted.
 
         """
 
@@ -166,5 +176,5 @@ class SimulateABTest:
 
 
 # class SimulateSkewedContinuous:
-#
-#
+# Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
+# Add support for dropout, model continuous outcomes with gamma, zero inflation as well
