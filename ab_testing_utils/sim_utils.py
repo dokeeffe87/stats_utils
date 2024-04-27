@@ -181,18 +181,19 @@ class SimulateSkewedContinuous:
     # Add support for dropout, model continuous outcomes with gamma, zero inflation as well
 
     def simulate_skewed_experiment(self):
-       # Use this to simulate a 2-variant skewed AB test.
-       # TODO: generalize to n-variants
-       pass
+        # Use this to simulate a 2-variant skewed AB test.
+        # TODO: generalize to n-variants
+        pass
 
-   def simulate_zero_skewed_outcomes(self, df, a=0.01, scale=10000, rounding=3):
+    def simulate_zero_skewed_outcomes(self, df, a=0.01, scale=10000, rounding=3):
 
         outcomes_ = []
         df_ = df.copy()
-        for d_ in df_['day'].unique():
-           num_samples = df_.query("day=='{0}'".format(d_))['units'].sum()
 
-           r = list(stats.gamma.rvs(size=num_samples, a=a, scale=scale))
+        for d_ in df_['day'].unique():
+            num_samples = df_.query("day=='{0}'".format(d_))['units'].sum()
+            r = list(stats.gamma.rvs(size=num_samples, a=a, scale=scale))
+            outcomes_ = outcomes_ + r
 
         df_['outcome'] = outcomes_
         df_['outcome'] = df_['outcome'].apply(lambda x: np.round(x, rounding))
