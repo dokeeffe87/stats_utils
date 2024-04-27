@@ -19,6 +19,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import scipy.stats as stats
 
 from typing import Union
 
@@ -175,6 +176,26 @@ class SimulateABTest:
         return df_exp
 
 
-# class SimulateSkewedContinuous:
-# Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
-# Add support for dropout, model continuous outcomes with gamma, zero inflation as well
+class SimulateSkewedContinuous:
+    # Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
+    # Add support for dropout, model continuous outcomes with gamma, zero inflation as well
+
+    def simulate_skewed_experiment(self):
+       # Use this to simulate a 2-variant skewed AB test.
+       # TODO: generalize to n-variants
+       pass
+
+   def simulate_zero_skewed_outcomes(self, df, a=0.01, scale=10000, rounding=3):
+
+        outcomes_ = []
+        df_ = df.copy()
+        for d_ in df_['day'].unique():
+           num_samples = df_.query("day=='{0}'".format(d_))['units'].sum()
+
+           r = list(stats.gamma.rvs(size=num_samples, a=a, scale=scale))
+
+        df_['outcome'] = outcomes_
+        df_['outcome'] = df_['outcome'].apply(lambda x: np.round(x, rounding))
+
+        return df_
+
