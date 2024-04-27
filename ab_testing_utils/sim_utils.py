@@ -185,7 +185,8 @@ class SimulateSkewedContinuous:
         # TODO: generalize to n-variants
         pass
 
-    def simulate_zero_skewed_outcomes(self, df, a=0.01, scale=10000, rounding=3):
+    @staticmethod
+    def simulate_zero_skewed_outcomes(df: pd.DataFrame, a: float = 0.01, scale: int = 10000, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
 
         outcomes_ = []
         df_ = df.copy()
@@ -199,4 +200,22 @@ class SimulateSkewedContinuous:
         df_['outcome'] = df_['outcome'].apply(lambda x: np.round(x, rounding))
 
         return df_
+
+    @staticmethod
+    def adjust_for_dropout(df: pd.DataFrame, dropout_prob: float, outcome_col_name: str = 'outcome', adjust_dropout_prob: bool = True):
+
+        df_zeros = df.query("@outcome_col_name==0")
+        df_not_zeros = df.query("@outcome_col_name > 0")
+
+        if adjust_dropout_prob:
+            dropout_prob = dropout_prob * df.shape[0] / df_zeros.shape[0]
+
+        dropout_labels = np.random.binomial(n=1, p=dropout_prob, size=df_zeros.shape[0])
+
+        df_zeros['is_dropout'] = dropout_labels
+        df_not_zeros['is_dropout'] = 0
+
+        df_with_do = pd.concat([df_zeros, df_not_zeros])
+
+        return df_with_do
 
