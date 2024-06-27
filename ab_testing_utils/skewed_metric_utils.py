@@ -16,6 +16,7 @@ V1.0.0
 """
 
 # import packages
+import datetime
 import os
 # import sys
 import numpy as np
@@ -28,12 +29,16 @@ import math
 import itertools
 import warnings
 import functools
+import multiprocess
+# import matplotlib as mpl
 
 from matplotlib import style
 from functools import partial
 from time import gmtime, strftime
-from typing import Union
-from tqdm import tqdm
+from typing import Union, Optional
+from tqdm.notebook import tqdm
+from collections import namedtuple, ChainMap
+import matplotlib.ticker as mtick
 
 warnings.filterwarnings('ignore')
 
@@ -57,8 +62,7 @@ def ri_test_statistic_difference_in_means(df: pd.DataFrame, outcome_col: str, tr
     :return: Difference in means
     """
 
-    sdo = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].mean(numeric_only=True) - df.query("{0}==@control_name".format(treatment_col))[
-        outcome_col].mean(numeric_only=True)
+    sdo = df.loc[(df[treatment_col] == treatment_name)][outcome_col].mean() - df.loc[(df[treatment_col] == control_name)][outcome_col].mean()
 
     return sdo
 
@@ -78,7 +82,7 @@ def ri_test_statistic_difference_in_ks(df: pd.DataFrame, outcome_col: str, treat
 
     :return: KS statistic
     """
-
+    # TODO: convert to loc
     ks_ = stats.ks_2samp(
         df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].values,
         df.query("{0}==@control_name".format(treatment_col))[outcome_col].values, alternative=alternative)
@@ -100,7 +104,7 @@ def ri_test_statistic_difference_in_percentiles(df: pd.DataFrame, outcome_col: s
 
     :return: Difference in percentiles
     """
-
+    # TODO: convert to loc
     q_diff = df.query("{0}==@treatment_name".format(treatment_col))[outcome_col].quantile(q=quantile) - df.query("{0}==@control_name".format(treatment_col))[
         outcome_col].quantile(q=quantile)
 
@@ -124,11 +128,14 @@ class RandomizationInference:
         self._supported_test_statistics = {'difference_in_means': ri_test_statistic_difference_in_means,
                                            'difference_in_percentiles': ri_test_statistic_difference_in_percentiles,
                                            'difference_in_ks_statistic': ri_test_statistic_difference_in_ks}
+        self._supported_alternatives = ['two-sided', 'greater', 'less']
+        self._supported_sample_methods = ['simple', 'weekly']
         # self._supported_ci_methods = ['percentile', 'pivotal']
         self.df_sims = None
         self.observed_test_statistic = None
         self.p_val = None
         self.ci = None
+        self.use_multiprocessing = False
 
     @staticmethod
     def sharp_null(df_: pd.DataFrame, sharp_null_type: str, sharp_null_value: float, outcome_column_name: str) -> pd.DataFrame:
@@ -229,7 +236,7 @@ class RandomizationInference:
 
         return hypothetical_assignments
 
-    def make_hypothetical_assignment(self, df_: pd.DataFrame, treatment_assignment_probability: float, test_statistic_function: functools.partial, sample_with_replacement: bool, num_perms: int = 1000) -> dict:
+    def make_hypothetical_assignment(self, df_: pd.DataFrame, treatment_assignment_probability: float, test_statistic_function: functools.partial, sample_with_replacement: bool, num_perms: int = 1000, try_distinct_perms: bool = False, chunksize: Union[int, None] = None) -> dict:
         """
         Function to make hypothetical assignments and manage the calculation of test statistics for each assignment.  Currently, this only supports simple assignments via a
         (possibly not 50/50) coin flip.  Also, only two variants are supported at the moment. There are two supported methodologies:
@@ -247,6 +254,8 @@ class RandomizationInference:
         :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
                                         be sampled.
         :param num_perms: Number of hypothetical assignments to draw
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
+        :param chunksize: Optional integer. The chunksize parameter to pass to multiprocessing imap. Only used is use_multiprocessing is true.
 
         :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
                  hypothetical assignment
@@ -259,19 +268,22 @@ class RandomizationInference:
         # set the random seed
         np.random.seed()
 
-        try:
-            n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
-        except ValueError:
+        # TODO: This is the bottleneck! Make this optional.
+        if try_distinct_perms:
+            try:
+                n_combs = math.comb(df_.shape[0], int(df_.shape[0] * treatment_assignment_probability))
+            except ValueError:
+                n_combs = np.inf
+        else:
             n_combs = np.inf
-
         if n_combs <= 1000:
-            print('Found {0} distinct assignment combinations. All combinations will be simulated.')
+            print('Found {0} distinct assignment combinations. All combinations will be simulated.'.format(n_combs))
             # Just get all possible assignment combinations. This should be small enough to handle in memory
             assignment_dict = self.get_all_combinations(size=df_.shape[0], treatment_probability=treatment_assignment_probability)
             for i, comb in tqdm(assignment_dict.items()):
                 sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=comb)
         else:
-            print('Number of distinct assignment combinations practically too large. Running {0} simulated permutations'.format(num_perms))
+            # print('Number of distinct assignment combinations practically too large. Running {0} simulated permutations'.format(num_perms))
             if not sample_with_replacement:
                 assignment_dict = {}
                 i = 0
@@ -286,9 +298,24 @@ class RandomizationInference:
                         pbar.update(1)
                 pbar.close()
             else:
-                for i in tqdm(range(num_perms)):
+                def run_assignment(iteration_, df_, treatment_assignment_probability, test_statistic_function):
                     assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
-                    sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                    result_ = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
+                    return {iteration_: result_}
+
+                if self.use_multiprocessing:
+                    arg_dict = {'df_': df_, 'treatment_assignment_probability': treatment_assignment_probability, 'test_statistic_function': test_statistic_function}
+                    with multiprocess.Pool(processes=multiprocess.cpu_count()) as pool:
+                        func_ = partial(run_assignment, **arg_dict)
+                        # TODO: Make the chunksize customizable
+                        res_object = tqdm(pool.imap(func_, list(range(num_perms)), chunksize=chunksize), total=num_perms, mininterval=1)
+                        res_vals = list(res_object)
+
+                    sim_dict = dict(ChainMap(*res_vals))
+                else:
+                    for i in tqdm(range(num_perms)):
+                        assignment_list = stats.binom.rvs(n=1, p=treatment_assignment_probability, size=df_.shape[0])
+                        sim_dict[i] = self.calculate_test_statistic(df_=df_, test_statistic_function=test_statistic_function, assignments=assignment_list)
 
         return sim_dict
 
@@ -329,7 +356,7 @@ class RandomizationInference:
 
         :return: Any array with the lower and upper confidence interval bounds.
         """
-        # TODO: revamp this. This doesn't really make sense actually. What we should provide is the range of value where the null hypothesis would be rejected...
+        # TODO: revamp this. This currently doesn't make sense
         # assert method in ['percentile', 'pivotal'], "Confidence interval calculation method {0} is not supported. Currently supported methods are: {1}".format(method, self._supported_ci_methods)
         # We'll only support the basic method for now (this is actually implemented in scipy https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_resampling.py#L279-L660)
 
@@ -421,7 +448,7 @@ class RandomizationInference:
 
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
 
-    def run_randomization_inference(self, df_: pd.DataFrame, test_statistic_function: functools.partial, treatment_assignment_probability: float, sample_with_replacement: bool, num_perms: int = 1000) -> dict:
+    def run_randomization_inference(self, num_perms: int, df_: pd.DataFrame, test_statistic_function: functools.partial, treatment_assignment_probability: float, sample_with_replacement: bool, try_distinct_perms: bool, chunksize: int) -> dict:
         """
         Function to handle running the randomization inference step. This just collects the results from make_hypothetical_assignments. We can probably remove this in future
         versions
@@ -434,6 +461,8 @@ class RandomizationInference:
         :param num_perms: Number of hypothetical assignments to draw. The default is 1000, but more may be required.  Note that setting sample_with_replacement will make running
                           more permutations much faster than requiring that each be unique.  The likelihood of drawing two identical assignment vectors for a large dataset is
                           probably very small to begin with.
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
+        :param chunksize: Optional integer. The chunksize parameter to pass to multiprocessing imap. Only used is use_multiprocessing is true.
 
         :return: A dictionary. The keys label the permutation (this is an arbitrary, but unique, key).  The values are the value of the test statistic calculated for each
                  hypothetical assignment
@@ -441,11 +470,11 @@ class RandomizationInference:
 
         assert 0 < treatment_assignment_probability < 1, "Treatment assignment probabilities must be great than 0 and less than 1. Received {0}".format(treatment_assignment_probability)
 
-        sim_dict = self.make_hypothetical_assignment(df_=df_, treatment_assignment_probability=treatment_assignment_probability, test_statistic_function=test_statistic_function, num_perms=num_perms, sample_with_replacement=sample_with_replacement)
+        sim_dict = self.make_hypothetical_assignment(df_=df_, treatment_assignment_probability=treatment_assignment_probability, test_statistic_function=test_statistic_function, num_perms=num_perms, sample_with_replacement=sample_with_replacement, try_distinct_perms=try_distinct_perms, chunksize=chunksize)
 
         return sim_dict
 
-    def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None):
+    def experimental_analysis(self, df, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', treatment_column_name='d', treatment_name=1, control_name=0, num_permutations=1000, alternative='two-sided', confidence=0.95, sample_with_replacement=False, filename=None, output_path=None, try_distinct_perms=False):
         """
         Function to handle running randomization inference on a two variant AB test. The point is to use randomization inference to test the hypothesis of the experiment.  The
         function here breaks up the randomization inference process into 4 steps:
@@ -480,18 +509,19 @@ class RandomizationInference:
         :param confidence: Confidence level of the test (e.g. 0.95 for a 95% confidence level)
         :param sample_with_replacement: If true, hypothetical assignment vectors will be sampled with replacement (bootstrapped). Otherwise, only distinct assignment vectors will
                                         be sampled.
+        :param try_distinct_perms: Optional boolean. If true, try to generate all distinct random assignments. Only possible if there are <= 1000 distinct permutations
         :param filename: Name of the file you want to save the output plot to.  This is optional. If you leave this out, the file name will default to
                          experimental_analysis_CURRENT_DATETIME.png
         :param output_path: Path to the directory where you want to save the output plot. If left out, this will default to the current working directory
 
         :return: Nothing. Generates a png file with a plot summarizing the results of the comparison
         """
-
+        # TODO: add type hints
         assert sharp_null_type in ['additive', 'multiplicative'], "only additive or multiplicative sharp nulls are supported. Received {0}".format(sharp_null_type)
 
         assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
 
-        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {0}".format(alternative)
+        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {1}".format(self._supported_alternatives, alternative)
 
         # Copy the input DataFrame so that we don't modify the original data in_place
         df_ = df.copy()
@@ -514,7 +544,7 @@ class RandomizationInference:
         # Also run the simulations
         # print('Running {0} permutations'.format(num_permutations))
         print('Running randomization inference...')
-        sim_dict = self.run_randomization_inference(df_=df_, test_statistic_function=test_statistic_function, treatment_assignment_probability=treatment_assignment_probability, num_perms=num_permutations, sample_with_replacement=sample_with_replacement)
+        sim_dict = self.run_randomization_inference(df_=df_, test_statistic_function=test_statistic_function, treatment_assignment_probability=treatment_assignment_probability, num_perms=num_permutations, sample_with_replacement=sample_with_replacement, try_distinct_perms=try_distinct_perms, chunksize=None)
 
         self.df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
         self.df_sims = self.df_sims.reset_index()
@@ -528,3 +558,307 @@ class RandomizationInference:
 
         # final output. This should be summarized in a plot
         self.plot_and_output_results(confidence=confidence, alternative=alternative, test_stat_name=test_stat_name, filename=filename, output_path=output_path)
+
+    def calculate_mde(self, df, weeks, test_statistic_function, expected_weekly_sample_size=None, date_tuple=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', sample_with_replacement=False, alpha=0.05, power=0.8, chunksize=None):
+        # TODO: add type hints
+        # TODO: add docstring
+        if sample_method == 'simple':
+            num_to_sample = int(weeks * expected_weekly_sample_size)
+            df_sample = df.sample(num_to_sample)
+        elif sample_method == 'weekly':
+            assert date_column is not None, "weekly sampling method requires a date column"
+            end_date = df[date_column].max()
+            start_date = end_date - datetime.timedelta(weeks=weeks)
+            df_sample = df.loc[(df[date_column] <= end_date) & (df[date_column] >= start_date)]
+            num_to_sample = df_sample.shape[0]
+        else:
+            # This is the windowed_weekly_sample methodology
+            df_sample = df.loc[(df[date_column] >= date_tuple[0]) & (df[date_column] <= date_tuple[1])]
+            num_to_sample = df_sample.shape[0]
+
+        # define return type
+        fields = ['weeks',
+                  'days',
+                  'total_sample_size',
+                  'mde',
+                  'critical_point',
+                  'simulated_effect_size_beta_percentile',
+                  'null_mean',
+                  'null_median',
+                  'null_ci_low',
+                  'null_ci_high']
+        mde_nt = namedtuple('mde', fields)
+
+        # Determine the desired level of significance
+        if alternative == 'two-sided':
+            q_significance = 1 - alpha/2
+        else:
+            q_significance = 1 - alpha
+
+        sim_dict = self.run_randomization_inference(df_=df_sample,
+                                                    test_statistic_function=test_statistic_function,
+                                                    treatment_assignment_probability=treatment_assignment_probability,
+                                                    num_perms=num_permutations,
+                                                    sample_with_replacement=sample_with_replacement,
+                                                    try_distinct_perms=False,
+                                                    chunksize=chunksize)
+
+        df_sims = pd.DataFrame.from_dict(sim_dict, orient='index')
+        df_sims = df_sims.reset_index()
+        df_sims.columns = ['permutation', 'test_statistic']
+
+        # Establish the critical value for significance
+        critical_point_ri = np.quantile(df_sims['test_statistic'].values, q_significance)
+
+        # Set the quantile for power calculation:
+        q_ = 100 - power * 100
+
+        simulated_effect_size_qth_percentile = np.percentile(df_sims['test_statistic'].values, q_)
+
+        # Shift the null distribution over so that 80% of its mass is to the right of the critical value.
+        # This is the minimum detectable effect size
+        mde_ = critical_point_ri - simulated_effect_size_qth_percentile
+
+        # We also want some measures of the null distribution
+        null_mean = df_sims['test_statistic'].mean()
+        null_median = df_sims['test_statistic'].median()
+        null_ci_low = np.percentile(df_sims['test_statistic'], 100*alpha/2)
+        null_ci_high = np.percentile(df_sims['test_statistic'], 100 - (100*alpha)/2)
+
+        return mde_nt(weeks=weeks,
+                      days=weeks * 7,
+                      total_sample_size=num_to_sample,
+                      mde=mde_,
+                      critical_point=critical_point_ri,
+                      simulated_effect_size_beta_percentile=simulated_effect_size_qth_percentile,
+                      null_mean=null_mean,
+                      null_median=null_median,
+                      null_ci_low=null_ci_low,
+                      null_ci_high=null_ci_high)
+
+    def power_calculation(self, df, min_weeks, max_weeks, expected_4_week_sample_size=None, start_date=None, end_date=None, sample_method='simple', date_column=None, sharp_null_type='additive', sharp_null_value=0, test_statistic={'function': 'difference_in_means', 'params': None}, treatment_assignment_probability=0.5, outcome_column_name='y', num_permutations=1000, alternative='two-sided', alpha=0.05, power=0.8, sample_with_replacement=False, use_multiprocessing=False, chunksize=None, filename=None, output_path=None, figsize=(12, 8)):
+        # TODO: add type hints
+        # TODO: add docstring
+        # TODO: Add support for calculating a relative percent lift over the control group for the test statistic. Not sure I can automate this, but can at least accept an input value
+        # We assume that the dataset we have is historical:
+
+        # 1. Use randomization inference to generate a null distribution
+
+        # 2. Shift the null to get the right power for the "alternate"
+
+        # 3. The shift amount is the minimum detectable effect size
+
+        # 4. Repeat using historical samples of different sizes
+
+        # 5. Map sample size to expected run time given baseline number of daily observations (roll up to weeks)
+
+        # 6. Map run time --> minimum detectable effect size:
+
+        assert sharp_null_type in ['additive', 'multiplicative'], "only additive or multiplicative sharp nulls are supported. Received {0}".format(sharp_null_type)
+
+        assert type(num_permutations) == int, "Only an integer number of permutations is possible. Received {0}".format(num_permutations)
+
+        assert alternative in ['two-sided', 'less', 'greater'], "Only {0} alternatives are supported. Received {1}".format(self._supported_alternatives, alternative)
+
+        assert sample_method in ['simple', 'weekly', 'windowed_weekly_sample'], "Only {0} sampling methods are supported. Received {1}".format(self._supported_sample_methods, sample_method)
+
+        self.use_multiprocessing = use_multiprocessing
+
+        if self.use_multiprocessing and not sample_with_replacement:
+            raise ValueError("multiprocessing only supported for sampling with replacement")
+
+        # We need to make sure we have enough data to support the min and max weeks desired runtime
+        if sample_method == 'simple':
+            num_historical_units = df.shape[0]
+            expected_weekly_sample_size = expected_4_week_sample_size / 4
+
+            assert expected_weekly_sample_size * min_weeks < num_historical_units, "Insufficient historical data for a minimum runtime of {0} weeks".format(min_weeks)
+            assert expected_weekly_sample_size * max_weeks <= num_historical_units, "Insufficient historical data for a maximum runtime of {0} weeks".format(max_weeks)
+        elif sample_method == 'weekly':
+            # TODO: Add additional check for weekly sampling method
+            expected_weekly_sample_size = None
+        else:
+            expected_weekly_sample_size = None
+            end_date = pd.to_datetime(end_date, infer_datetime_format=True)
+            start_date = pd.to_datetime(start_date, infer_datetime_format=True)
+            assert start_date is not None, "start_date must be specified in order to use the windowed_weekly_sample method"
+            assert end_date is not None, "end_date must be specified in order to use the windowed_weekly_sample_method"
+            assert start_date + datetime.timedelta(weeks=max_weeks) <= end_date, "{0} and {1} do not provide enough time to accommodate a maximum number of weeks {2}".format(start_date, end_date, max_weeks)
+            week_ranges = pd.date_range(start=start_date, end=end_date, freq='1W')
+
+        # Copy the input DataFrame so that we don't modify the original data in_place
+        df_ = df.copy()
+
+        # Save the input test statistic name if it's a string
+        if type(test_statistic['function']) == str:
+            test_stat_name = test_statistic['function'].replace('_', ' ')
+        else:
+            test_stat_name = 'custom test statistic'
+
+        # Step 1: implement the selected sharp null
+        df_ = self.sharp_null(df_=df_, sharp_null_type=sharp_null_type, sharp_null_value=sharp_null_value, outcome_column_name=outcome_column_name)
+
+        # Step 2: pick a test statistic. We have a list of pre-built ones, otherwise a function must be supplied
+        # This function must consume a DataFrame and return a single scalar value
+        test_statistic_function = self.select_test_statistic(test_statistic=test_statistic)
+
+        effect_size_dict = {'weeks': [],
+                            'days': [],
+                            'total_sample_size': [],
+                            'mde': [],
+                            'critical_point': [],
+                            'simulated_effect_size_beta_percentile': [],
+                            'null_median': [],
+                            'null_mean': [],
+                            'null_ci_low': [],
+                            'null_ci_high': []}
+
+        for weeks_ in tqdm(range(min_weeks, max_weeks + 1)):
+            # TODO make a date windowed version of the belows. There must be a nicer way to do this...
+            if sample_method == 'windowed_weekly_sample':
+                date_tuples = [(d, d + datetime.timedelta(weeks=weeks_)) for d in week_ranges if d + datetime.timedelta(weeks=weeks_) <= end_date]
+                for date_tuple in tqdm(date_tuples):
+                    mde_nt = self.calculate_mde(df=df_,
+                                                weeks=weeks_,
+                                                date_tuple=date_tuple,
+                                                sample_method=sample_method,
+                                                date_column=date_column,
+                                                expected_weekly_sample_size=expected_weekly_sample_size,
+                                                test_statistic_function=test_statistic_function,
+                                                sharp_null_type=sharp_null_type,
+                                                sharp_null_value=sharp_null_value,
+                                                treatment_assignment_probability=treatment_assignment_probability,
+                                                outcome_column_name=outcome_column_name,
+                                                num_permutations=num_permutations,
+                                                alternative=alternative,
+                                                sample_with_replacement=sample_with_replacement,
+                                                alpha=alpha,
+                                                power=power,
+                                                chunksize=chunksize)
+
+                    for key, list_ in effect_size_dict.items():
+                        list_.append(mde_nt._asdict()[key])
+            else:
+                mde_nt = self.calculate_mde(df=df_,
+                                            weeks=weeks_,
+                                            sample_method=sample_method,
+                                            date_column=date_column,
+                                            expected_weekly_sample_size=expected_weekly_sample_size,
+                                            test_statistic_function=test_statistic_function,
+                                            sharp_null_type=sharp_null_type,
+                                            sharp_null_value=sharp_null_value,
+                                            treatment_assignment_probability=treatment_assignment_probability,
+                                            outcome_column_name=outcome_column_name,
+                                            num_permutations=num_permutations,
+                                            alternative=alternative,
+                                            sample_with_replacement=sample_with_replacement,
+                                            alpha=alpha,
+                                            power=power,
+                                            chunksize=None)
+
+            for key, list_ in effect_size_dict.items():
+                list_.append(mde_nt._asdict()[key])
+
+        # TODO: We may need to modify this for the windowned weekly sampling methodology. Or we can push it off to the plotting function
+        df_mde = pd.DataFrame.from_dict(effect_size_dict)
+
+        # Plot the return output
+        self.plot_power_results(df=df_mde,
+                                min_weeks=min_weeks,
+                                max_weeks=max_weeks,
+                                stat_name=test_stat_name,
+                                save_path=output_path,
+                                output_filename=filename,
+                                figsize=figsize)
+
+        return df_mde
+
+    @staticmethod
+    def format_y_axis(x: float, pos) -> str:
+        """
+        Helper function to format the y-axis of the MDE vs runtime plot.
+
+        :param x: A number used as a tick on a matplotlib plot that you want to format
+        :param pos: This is a position indicator used internally by matplotlib to figure out where to plot the tick. You should never have to interact with it directly.
+
+        :return: The formatted tick mark
+        """
+
+        return f"{int(x):,}"
+
+    @staticmethod
+    def plot_mde_marker(df: pd.DataFrame, weeks: int, days: int, ax):
+        """
+        Function to format the minimum detectable effect size plot.  This will add horizontal lines to indicate the required number of weeks, as well as annotate the plot to
+        indicate the minimum detectable effect size at the desired level of significance and power.
+
+        :param df: A DataFrame with experimental runtime and minimum detectable effect sizes.  This should be the output of the create_mde_table method.
+        :param weeks: The number of weeks for one particular instance of the experiment, at a given level of significance, power, and effect size
+        :param days: The number of days for one particular instance of the experiment, at a given level of significance, power, and effect size
+        :param ax: The matplotlib ax object for the overall plot. Generated by the make_mde_plot function
+
+        :return: Nothing. Just adds formatting to the existing plot object
+        """
+        # TODO: Add view into what ranges of effect will not be distinguishable from the baseline (i.e. the rejection region)
+
+        ax.axhline(y=days, linestyle='--', xmax=(df[df['days'] <= days]['mde'].min() - ax.get_xlim()[0]) / ax.get_xlim()[1] - 0.005)
+
+        if weeks > 1:
+            week_text = 'weeks'
+        else:
+            week_text = 'week'
+
+        # ax.text(ax.get_xlim()[0], days + 1, f"{weeks} {week_text}", horizontalalignment='left')
+        ax.text(ax.get_xlim()[0], days + 0.25, f"{weeks} {week_text}", horizontalalignment='left')
+
+        mde_text = "MDE = {0}".format(np.round(df[df['weeks'] == weeks]['mde'].min(), 3))
+
+        # ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days - 0.5, mde_text, horizontalalignment='left')
+        ax.text(df[df['weeks'] <= weeks]['mde'].min() * 1.05, days, mde_text, horizontalalignment='left')
+
+    def plot_power_results(self, df, min_weeks, max_weeks, stat_name, save_path, output_filename, figsize=(12, 8)):
+        # TODO: add type hints
+        # TODO: add docstring
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        ax.plot("mde", 'days', data=df, linewidth=2, solid_capstyle="round", linestyle='--', marker='o', color='b')
+
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(self.format_y_axis))
+
+        ax.set_xlabel('Minimum detectable effect size for: {0}'.format(stat_name))
+        ax.set_ylabel('')
+
+        x_limit = df[df["weeks"] <= min_weeks]["mde"].min() * 1.2
+        x_min = df[df['weeks'] == max_weeks]['mde'].min()
+        x_min = x_min - 0.1 * x_min
+        ax.set_xlim([x_min, x_limit])
+
+        for weeks in range(min_weeks, max_weeks + 1):
+            days_ = df.query('weeks == {0}'.format(weeks))['days'].min()
+            self.plot_mde_marker(df=df, weeks=weeks, days=days_, ax=ax)
+
+        ax.set_title('Experiment run times by minimum detectable effect size', fontsize=20)
+
+        # We don't need the y-axis here
+        ax.axes.get_yaxis().set_visible(False)
+
+        ax.yaxis.grid(True)
+        ax.spines["left"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+
+        if save_path is None:
+            save_path = os.getcwd()
+
+        if output_filename is None:
+            file_name = 'experiment_runtime_vs_mde_{0}.png'.format(current_time)
+        else:
+            if not output_filename.endswith('.png'):
+                file_name = output_filename + '.png'
+            else:
+                file_name = output_filename
+
+        save_path = os.path.join(save_path, file_name)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
