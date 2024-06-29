@@ -244,12 +244,16 @@ class InterruptedTimeSeries:
 
         return model_
 
-    def model_interpreter(self, df: pd.DataFrame, variable_name_dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, alpha: float = 0.05):
+    def ols_model_interpreter(self, df: pd.DataFrame, variable_name_dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, current_time: str, alpha: float = 0.05):
         """
 
         :param df:
+        :param variable_name_dict:
         :param model_:
         :param model_type:
+        :param save_path:
+        :param alpha:
+        :param current_time:
 
         :return:
         """
@@ -258,31 +262,112 @@ class InterruptedTimeSeries:
         assert all(name in self.supported_model_types for name in
                    variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.supported_model_types)
 
+        post_treatment_col = variable_name_dict['D']
+        outcome_col = variable_name_dict['outcome']
+
+        print(model_.summary())
+
+        # get the effect size
+        effect_size_abs = model_.params['D']
+        effect_size_abs_lower = model_.conf_int(alpha=alpha, cols=None)[0][post_treatment_col]
+        effect_size_abs_upper = model_.conf_int(alpha=alpha, cols=None)[1][post_treatment_col]
+
+        effect_size_rel = (effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        effect_size_rel_lower = (effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        effect_size_rel_upper = (effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+
+        # Get p-value
+        p_val = model_.pvalues[post_treatment_col]
+        is_stat_sig = p_val < alpha
+
+        print('\n\n')
+
+        effect_abs_str = "Absolute effect size estimated at: {0} {1}% CI: ({2} - {3})".format(np.round(effect_size_abs, 2),
+            np.round(int((1 - alpha) * 100), 2),
+            np.round(effect_size_abs_lower, 2),
+            np.round(effect_size_abs_upper, 2))
+        effect_rel_str = "Absolute effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(np.round(effect_size_rel * 100, 2),
+            np.round(int((1 - alpha) * 100), 2),
+            np.round(effect_size_rel_lower * 100, 2),
+            np.round(effect_size_rel_upper * 100, 2))
+        if is_stat_sig:
+            stat_sig_str = "P-value: {0}. The effect is statistically significant".format(np.round(p_val, 3))
+        else:
+            stat_sig_str = "P-value: {0}. No evidence for significant effect".format(np.round(p_val, 3))
+
+        print(effect_abs_str)
+        print('\n')
+        print(effect_rel_str)
+        print('\n')
+        print(stat_sig_str)
+        # TODO: consolidate this. We can actually combine almost everything for all model types at this point
         if model_type == 'interrupted_time_series':
-
-            post_treatment_col = variable_name_dict['D']
-            outcome_col = variable_name_dict['outcome']
-
-            print(model_.summary())
-
-            # get the effect size
-            effect_size_abs = model_.params['D']
-            effect_size_abs_lower = model_.conf_int(alpha=alpha, cols=None)[0][post_treatment_col]
-            effect_size_abs_upper = model_.conf_int(alpha=alpha, cols=None)[1][post_treatment_col]
-
-            effect_size_rel = (effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-            effect_size_rel_lower = (effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-            effect_size_rel_upper = (effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-
-            # Get p-value
-            p_val = model_.pvalues[post_treatment_col]
-            is_stat_sig = p_val < alpha
 
             # Get the Durban-Watson statistic
             dw_stat = durbin_watson(model_.resid)
 
             # Get the Jarque Bera statistics
-            jb_stat = jarque_bera(model_.resid)[1]
+            jb_prob = jarque_bera(model_.resid)[1]
+
+            # Verify assumptions of OLS
+            if jb_prob < 0.05:
+                residual_normality_verified = False
+            else:
+                residual_normality_verified = True
+
+            if dw_stat < 1.5:
+                residual_independence_verified = False
+                residual_independence_violation = 'positive auto-correlation'
+            if dw_stat > 2.5:
+                residual_independence_verified = False
+                residual_independence_violation = 'negative auto-correlation'
+            else:
+                residual_independence_verified = True
+                residual_independence_violation = None
+
+            if not residual_normality_verified:
+                print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_stat, 3)))
+                print('Evidence that residuals do not follow a normal distribution. Revise the choice of a least squares model')
+            if not residual_independence_verified:
+                print("WARNING: Durban-Watson statistic = {0}".format(np.round(dw_stat, 3)))
+                print("evidence for {0} in residuals.  Residuals may not be independent. Revise the choice of a least square model".format(residual_independence_violation))
+                print("Generating auto-correlation and partial auto-correlation plots for review...")
+
+                file_name_auto_corr = 'autocorrelation_of_residuals_{0}.png'.format(current_time)
+                file_name_auto_corr = os.path.join(save_path, file_name_auto_corr)
+                sm.graphics.tsa.plot_acf(model_.resid, lags=10)
+                plt.savefig(file_name_auto_corr)
+
+                file_name_partial_auto_corr = 'partial_autocorrelation_of_residuals_{0}.png'.format(current_time)
+                file_name_partial_auto_corr = os.path.join(save_path, file_name_partial_auto_corr)
+                sm.graphics.tsa.plot_pacf(model_.resid, lags=10)
+                plt.savefig(file_name_partial_auto_corr)
+
+        if model_type in ('naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series'):
+
+            # Get the Jarque-Bera statistics
+            jb_prob = jarque_bera(model_.resid)[1]
+
+            # Get the Ljung-Box Q statistic
+            q_stat_prob = pd.read_html(model_.summary().tables[2].as_html(), index_col=0)[0][1]['Prob(Q):']
+
+            # Verify assumptions of OLS
+            if jb_prob < 0.05:
+                residual_normality_verified = False
+            else:
+                residual_normality_verified = True
+
+            if q_stat_prob < 0.05:
+                residual_independence_verified = False
+            else:
+                residual_independence_verified = True
+
+            if not residual_normality_verified:
+                print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_stat, 3)))
+                print('Evidence that residuals do not follow a normal distribution. Revise the choice of a least squares model')
+
+
+
 
 
 
