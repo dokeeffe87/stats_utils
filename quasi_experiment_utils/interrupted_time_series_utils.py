@@ -86,10 +86,13 @@ class InterruptedTimeSeries:
         # Build the model object
 
         # Return and interpret results. This will need to be a separate flow for different model types, probably
+        # re-iterate model assumption violation based on the returned value here
 
         # Make recommendations for a better approach
+        # THIS IS DONE ABOVE
 
         # If it looks like we need to, auto-produce autocorrelation plots
+        # THIS IS DONE ABOVE
 
         # Compute counterfactuals
 
@@ -244,7 +247,7 @@ class InterruptedTimeSeries:
 
         return model_
 
-    def ols_model_interpreter(self, df: pd.DataFrame, variable_name_dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, current_time: str, alpha: float = 0.05):
+    def ols_model_interpreter(self, df: pd.DataFrame, variable_name_dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, current_time: str, alpha: float = 0.05) -> bool:
         """
 
         :param df:
@@ -282,14 +285,18 @@ class InterruptedTimeSeries:
 
         print('\n\n')
 
-        effect_abs_str = "Absolute effect size estimated at: {0} {1}% CI: ({2} - {3})".format(np.round(effect_size_abs, 2),
-            np.round(int((1 - alpha) * 100), 2),
-            np.round(effect_size_abs_lower, 2),
-            np.round(effect_size_abs_upper, 2))
-        effect_rel_str = "Absolute effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(np.round(effect_size_rel * 100, 2),
-            np.round(int((1 - alpha) * 100), 2),
-            np.round(effect_size_rel_lower * 100, 2),
-            np.round(effect_size_rel_upper * 100, 2))
+        effect_abs_str = "Absolute effect size estimated at: {0} {1}% CI: ({2} - {3})".format(
+                                                                                              np.round(effect_size_abs, 2),
+                                                                                              np.round(int((1 - alpha) * 100), 2),
+                                                                                              np.round(effect_size_abs_lower, 2),
+                                                                                              np.round(effect_size_abs_upper, 2)
+                                                                                              )
+        effect_rel_str = "Absolute effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(
+                                                                                                 np.round(effect_size_rel * 100, 2),
+                                                                                                 np.round(int((1 - alpha) * 100), 2),
+                                                                                                 np.round(effect_size_rel_lower * 100, 2),
+                                                                                                 np.round(effect_size_rel_upper * 100, 2)
+                                                                                                )
         if is_stat_sig:
             stat_sig_str = "P-value: {0}. The effect is statistically significant".format(np.round(p_val, 3))
         else:
@@ -300,73 +307,154 @@ class InterruptedTimeSeries:
         print(effect_rel_str)
         print('\n')
         print(stat_sig_str)
-        # TODO: consolidate this. We can actually combine almost everything for all model types at this point
+
+        # Get the Durban-Watson statistic
+        dw_stat = durbin_watson(model_.resid)
+
+        # Get the Jarque Bera statistics
+        jb_prob = jarque_bera(model_.resid)[1]
+
+        # Verify assumptions of OLS
+        if jb_prob < 0.05:
+            residual_normality_verified = False
+        else:
+            residual_normality_verified = True
+
+        # Verify the normality of the residuals. This should be common for OLS and ARIMA
+        if not residual_normality_verified:
+            print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_prob, 3)))
+            print('Evidence that residuals do not follow a normal distribution.')
+
+        # Assume independence of the residuals is satisfied and test this assumption below
+        residual_independence_verified = True
+        stat_type = None
+        residual_independence_violation = None
+
+        # Verify independence of residuals (OLS)
         if model_type == 'interrupted_time_series':
 
-            # Get the Durban-Watson statistic
-            dw_stat = durbin_watson(model_.resid)
-
-            # Get the Jarque Bera statistics
-            jb_prob = jarque_bera(model_.resid)[1]
-
-            # Verify assumptions of OLS
-            if jb_prob < 0.05:
-                residual_normality_verified = False
-            else:
-                residual_normality_verified = True
-
+            stat_type = 'Durbin-Waston'
             if dw_stat < 1.5:
                 residual_independence_verified = False
                 residual_independence_violation = 'positive auto-correlation'
             if dw_stat > 2.5:
                 residual_independence_verified = False
                 residual_independence_violation = 'negative auto-correlation'
-            else:
-                residual_independence_verified = True
-                residual_independence_violation = None
-
-            if not residual_normality_verified:
-                print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_stat, 3)))
-                print('Evidence that residuals do not follow a normal distribution. Revise the choice of a least squares model')
-            if not residual_independence_verified:
-                print("WARNING: Durban-Watson statistic = {0}".format(np.round(dw_stat, 3)))
-                print("evidence for {0} in residuals.  Residuals may not be independent. Revise the choice of a least square model".format(residual_independence_violation))
-                print("Generating auto-correlation and partial auto-correlation plots for review...")
-
-                file_name_auto_corr = 'autocorrelation_of_residuals_{0}.png'.format(current_time)
-                file_name_auto_corr = os.path.join(save_path, file_name_auto_corr)
-                sm.graphics.tsa.plot_acf(model_.resid, lags=10)
-                plt.savefig(file_name_auto_corr)
-
-                file_name_partial_auto_corr = 'partial_autocorrelation_of_residuals_{0}.png'.format(current_time)
-                file_name_partial_auto_corr = os.path.join(save_path, file_name_partial_auto_corr)
-                sm.graphics.tsa.plot_pacf(model_.resid, lags=10)
-                plt.savefig(file_name_partial_auto_corr)
 
         if model_type in ('naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series'):
 
-            # Get the Jarque-Bera statistics
-            jb_prob = jarque_bera(model_.resid)[1]
-
+            stat_type = 'Ljung-Box'
+            # Check for serial auto-correlation in the residuals
             # Get the Ljung-Box Q statistic
             q_stat_prob = pd.read_html(model_.summary().tables[2].as_html(), index_col=0)[0][1]['Prob(Q):']
 
-            # Verify assumptions of OLS
-            if jb_prob < 0.05:
-                residual_normality_verified = False
-            else:
-                residual_normality_verified = True
-
             if q_stat_prob < 0.05:
                 residual_independence_verified = False
-            else:
-                residual_independence_verified = True
+                residual_independence_violation = 'serial auto-correlation'
 
-            if not residual_normality_verified:
-                print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_stat, 3)))
-                print('Evidence that residuals do not follow a normal distribution. Revise the choice of a least squares model')
+        if not residual_independence_verified:
+            print("WARNING: {0} statistic = {1}".format(stat_type, np.round(dw_stat, 3)))
+            print("evidence for {0} in residuals.  Residuals may not be independent. Revise the choice of a least square model".format(residual_independence_violation))
+            print("Generating auto-correlation and partial auto-correlation plots for review...")
+
+            # Generate autocorrelation plot for the model residuals
+            file_name_auto_corr = 'autocorrelation_of_residuals_{0}.png'.format(current_time)
+            file_name_auto_corr = os.path.join(save_path, file_name_auto_corr)
+            sm.graphics.tsa.plot_acf(model_.resid, lags=10)
+            plt.savefig(file_name_auto_corr)
+
+            # Generate partial autocorrelation plot for the model residuals
+            file_name_partial_auto_corr = 'partial_autocorrelation_of_residuals_{0}.png'.format(current_time)
+            file_name_partial_auto_corr = os.path.join(save_path, file_name_partial_auto_corr)
+            sm.graphics.tsa.plot_pacf(model_.resid, lags=10)
+            plt.savefig(file_name_partial_auto_corr)
+
+        # Make recommendations about what to do
+        if stat_type == 'Durbin-Waston' and not residual_independence_verified and model_type == 'interrupted_time_series':
+            print("Consider using an ARIMA model instead of the Ordinary Least Squares approach")
+        if stat_type == 'Ljung-Box' and not residual_independence_verified and model_type == 'naive_arima_interrupted_time_series':
+            print('Consider using a different set of model parameters')
+            print('Examine the auto-correlations and partial auto-correlations in your data to select order parameters or using the auto_arima_interrupted_time_series option.')
+        if stat_typ == 'Ljung-Box' and not residual_independence_verified and model_type == 'auto_arima_interrupted_time_series':
+            print("Consider re-examining the fit of the auto ARIMA model.")
+            print("Increase the number of iterations for the parameter search if necessary, or consider using a different analytical approach")
+        if not residual_normality_verified:
+            print("Consider examining the distribution of the model residuals. A QQ-plot of the residuals could also help understanding deviations from normality.")
+            print("Normality of the residuals may fail due to sample size issues. Either try and get more data, or consider a different analytical approach.")
+
+        if not residual_independence_verified or not residual_normality_verified:
+            return False
+        else:
+            return True
+
+    def calculate_counterfactuals(self, df: pd.DataFrame, post_treatment_col: str, running_variable_col: str, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, outcome_col: str, outcome_name: str, treatment_name: str, alpha: float = 0.05):
+        pass
+
+        # We'll need to have two different workflows, one for the standard OLS and another for both supported ARIMA types
+
+        # We need the start and end indices for the post-treatment period
+        start = df.query("{0}==1".format(post_treatment_col)).index.astype(int).min()
+        end = df.query("{0}==1".format(post_treatment_col)).index.astype(int).max()
+
+        if model_type == 'interrupted_time_series':
+            predictions = model_.get_prediction(df)
+            summary = predictions.summary_frame(alpha=alpha)
+
+            y_pred = predictions.predicted_mean
+            y_pred = pd.DataFrame({'y_hat': y_pred})
+            y_pred[post_treatment_col] = df[post_treatment_col].values
+
+            # Make a copy of the original DataFrame
+            # This will contain the counterfactual predictions, which assumes no intervention has happened
+            # i.e. D = 0 and P = 0 throughout the entire observation period
+            df_cf = df.copy()
+            df_cf[post_treatment_col] = 0.0
+            df_cf[running_variable_col] = 0.0
+
+            cf = model_.get_prediction(df_cf).summary_frame(alpha=alpha)
+            # Restore the true post-treatment variable values so that we can distinguish counterfactual predictions in the actual post treatment period.
+            cf[post_treatment_col] = df[post_treatment_col].values
+
+        if model_type in ('naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series'):
+            pass
+
+        return cf, y_pred
 
 
+        # for interrupted time series:
+        # beta = model_.params
+        # predictions = model_.get_prediction(df)
+        # summary = predictions.summary_frame(alpha=alpha)
+        #
+        # y_pred = predictions.predicted_mean
+        # y_pred = pd.DataFrame({'y_hat': y_pred})
+        # y_pred[post_treatment_col] = df[post_treatment_col].values
+        #
+        # df_cf = df.copy()
+        # df_cf[post_treatment_col] = 0.0
+        # df_cf[running_variable_col] = 0.0
+        # cf = model_.get_prediction(df_cf).summary_frame(alpha=alpha)
+        #
+        # cf[post_treatment_col] = df[post_treatment_col].values
+        #
+        # return cf, y_pred
+
+        # For any of the ARIMA types:
+        # We'll need to refit an ARIMA model here with the same order parameters (both normal and seasonal, if any) on only the pre-treatment period
+        # The predictions from that model are the counterfactuals. We also set the D and P values to zero in this counterfactual model (or just remove them entirely at this point)
+        # start = 24
+        # end = 48
+        #
+        # predictions = arima_results.get_prediction(0, end-1)
+        # summary = predictions.summary_frame(alpha=0.05)
+        #
+        # arima_cf = ARIMA(df["Y"][:start], df["T"][:start], order=(1,0,0)).fit()
+        #
+        # # Model predictions means
+        # y_pred = predictions.predicted_mean
+        #
+        # # Counterfactual mean and 95% confidence interval
+        # y_cf = arima_cf.get_forecast(24, exog=df["T"][start:]).summary_frame(alpha=0.05)
 
 
 
