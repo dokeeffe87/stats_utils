@@ -359,9 +359,9 @@ class InterruptedTimeSeries:
         self.effect_size_abs_lower = model_.conf_int(alpha=alpha, cols=None)[0][post_treatment_col]
         self.effect_size_abs_upper = model_.conf_int(alpha=alpha, cols=None)[1][post_treatment_col]
 
-        self.effect_size_rel = (effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-        self.effect_size_rel_lower = (effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-        self.effect_size_rel_upper = (effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel = (self.effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel_lower = (self.effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel_upper = (self.effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
 
         # Get p-value
         self.p_value = model_.pvalues[post_treatment_col]
