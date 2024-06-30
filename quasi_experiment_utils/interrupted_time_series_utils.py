@@ -33,6 +33,7 @@ import random
 import datetime
 import statsmodels as sms
 import statsmodels.api as sm
+import warnings
 
 from matplotlib import style
 from statsmodels.tsa.arima.model import ARIMA
@@ -42,6 +43,8 @@ from pmdarima import model_selection
 from time import gmtime, strftime
 from typing import Union
 from tqdm import tqdm
+
+warnings.filterwarnings('ignore')
 
 # set the plot style
 style.use('fivethirtyeight')
@@ -63,6 +66,7 @@ class InterruptedTimeSeries:
                                       'regression_discontinuity',
                                       'fuzzy_regression_discontinuity')
         self.interrupted_time_series_vars = ('outcome', 'T', 'D', 'P')
+        # self.interrupted_time_series_vars = ('T', 'D', 'P')
         self.treatment_date = treatment_date
         self.date_col = None
         self.treatment_name = None
@@ -101,12 +105,12 @@ class InterruptedTimeSeries:
 
         self.date_col = date_col
 
-        if self.outcome_name is None:
+        if outcome_name is None:
             self.outcome_name = 'outcome'
         else:
             self.outcome_name = outcome_name
 
-        if self.treatment_name is None:
+        if treatment_name is None:
             self.treatment_name = 'treatment'
         else:
             self.treatment_name = treatment_name
@@ -152,6 +156,7 @@ class InterruptedTimeSeries:
 
         if violated_:
             print("WARNING: Some or all model assumptions tested have been invalidated!")
+            print('\n')
 
         # Compute counterfactuals and plot along with effect size estimates
         self.counterfactual, self.outcome_predictions = self.calculate_counterfactuals(df=df_,
@@ -161,7 +166,8 @@ class InterruptedTimeSeries:
                                                                                        model_type=model_type,
                                                                                        save_path=save_path,
                                                                                        figsize=figsize,
-                                                                                       alpha=alpha)
+                                                                                       alpha=alpha,
+                                                                                       current_time=current_time)
 
         print("Process complete")
 
@@ -266,12 +272,12 @@ class InterruptedTimeSeries:
         # This only applies if this model is not meant to be a refit for estimating a counterfactual
         # In that case, both D and P would not exist.
         if not refit_:
-            assert all(name in self.supported_model_types for name in
-                       variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.supported_model_types)
+            assert all(name in self.interrupted_time_series_vars for name in
+                       variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.interrupted_time_series_vars)
 
         if model_type == 'interrupted_time_series':
 
-            model_vars = [variable_name_dict[i] for i in self.supported_model_types]
+            model_vars = [variable_name_dict[i] for i in self.interrupted_time_series_vars]
             model_str = "{0} ~ {1} + {2} + {3}".format(*model_vars)
 
             model_obj = smf.ols(formula=model_str, data=df)
@@ -281,7 +287,10 @@ class InterruptedTimeSeries:
         if model_type == 'naive_arima_interrupted_time_series':
 
             outcome_col = variable_name_dict['outcome']
-            covariate_cols = [val for key, val in variable_name_dict.items() if key != 'outcome']
+            if not refit_:
+                covariate_cols = [val for key, val in variable_name_dict.items() if key != 'outcome']
+            else:
+                covariate_cols = variable_name_dict['T']
 
             try:
                 arima_order = arima_params_dict['order']
@@ -344,10 +353,10 @@ class InterruptedTimeSeries:
 
         :return:
         """
-
+        # TODO: I can remove this here. This is done above and no one should be using this method as a standalone
         assert model_type in self.supported_model_types, "model type {0} not one of the supported types: {1}".format(model_type, self.supported_model_types)
-        assert all(name in self.supported_model_types for name in
-                   variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.supported_model_types)
+        assert all(name in self.interrupted_time_series_vars for name in
+                   variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.interrupted_time_series_vars)
 
         post_treatment_col = variable_name_dict['D']
         outcome_col = variable_name_dict['outcome']
@@ -375,7 +384,7 @@ class InterruptedTimeSeries:
                                                                                               np.round(self.effect_size_abs_lower, 2),
                                                                                               np.round(self.effect_size_abs_upper, 2)
                                                                                               )
-        effect_rel_str = "Absolute effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(
+        effect_rel_str = "Relative effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(
                                                                                                  np.round(self.effect_size_rel * 100, 2),
                                                                                                  np.round(int((1 - alpha) * 100), 2),
                                                                                                  np.round(self.effect_size_rel_lower * 100, 2),
@@ -391,6 +400,7 @@ class InterruptedTimeSeries:
         print(effect_rel_str)
         print('\n')
         print(stat_sig_str)
+        print('\n')
 
         # Get the Durban-Watson statistic
         dw_stat = durbin_watson(model_.resid)
@@ -408,6 +418,7 @@ class InterruptedTimeSeries:
         if not residual_normality_verified:
             print("WARNING: Jarque-Bera statistic = {0}".format(np.round(jb_prob, 3)))
             print('Evidence that residuals do not follow a normal distribution.')
+            print('\n')
 
         # Assume independence of the residuals is satisfied and test this assumption below
         residual_independence_verified = True
@@ -438,8 +449,9 @@ class InterruptedTimeSeries:
 
         if not residual_independence_verified:
             print("WARNING: {0} statistic = {1}".format(stat_type, np.round(dw_stat, 3)))
-            print("evidence for {0} in residuals.  Residuals may not be independent. Revise the choice of a least square model".format(residual_independence_violation))
+            print("evidence for {0} in residuals.  Residuals may not be independent. Revise the choice of model".format(residual_independence_violation))
             print("Generating auto-correlation and partial auto-correlation plots for review...")
+            print('\n')
 
             # Generate autocorrelation plot for the model residuals
             file_name_auto_corr = 'autocorrelation_of_residuals_{0}.png'.format(current_time)
@@ -456,22 +468,26 @@ class InterruptedTimeSeries:
         # Make recommendations about what to do
         if stat_type == 'Durbin-Waston' and not residual_independence_verified and model_type == 'interrupted_time_series':
             print("Consider using an ARIMA model instead of the Ordinary Least Squares approach")
+            print('\n')
         if stat_type == 'Ljung-Box' and not residual_independence_verified and model_type == 'naive_arima_interrupted_time_series':
             print('Consider using a different set of model parameters')
             print('Examine the auto-correlations and partial auto-correlations in your data to select order parameters or using the auto_arima_interrupted_time_series option.')
+            print('\n')
         if stat_type == 'Ljung-Box' and not residual_independence_verified and model_type == 'auto_arima_interrupted_time_series':
             print("Consider re-examining the fit of the auto ARIMA model.")
             print("Increase the number of iterations for the parameter search if necessary, or consider using a different analytical approach")
+            print('\n')
         if not residual_normality_verified:
             print("Consider examining the distribution of the model residuals. A QQ-plot of the residuals could also help understanding deviations from normality.")
             print("Normality of the residuals may fail due to sample size issues. Either try and get more data, or consider a different analytical approach.")
+            print('\n')
 
         if not residual_independence_verified or not residual_normality_verified:
-            return False
-        else:
             return True
+        else:
+            return False
 
-    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, figsize: tuple, alpha: float = 0.05):
+    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, figsize: tuple, current_time: str, alpha: float = 0.05):
         """
 
         :param df:
@@ -480,6 +496,7 @@ class InterruptedTimeSeries:
         :param model_:
         :param model_type:
         :param figsize:
+        :param current_time:
         :param save_path: Optional path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
         :param alpha:
 
@@ -511,8 +528,6 @@ class InterruptedTimeSeries:
 
         if model_type in ('naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series'):
             predictions = model_.get_prediction(0, end)
-            # TODO: I don't actually need to use this
-            # summary = predictions.summary_frame(alpha=alpha)
 
             arima_params_dict_ = arima_params_dict.copy()
             # Get the order and seasonal order parameters from the original model
@@ -527,14 +542,22 @@ class InterruptedTimeSeries:
                                            refit_=True)
             # Model prediction means
             y_pred = predictions.predicted_mean
+            y_pred = pd.DataFrame({'y_hat': y_pred})
+            y_pred[variable_name_dict['D']] = df[variable_name_dict['D']].values
 
             # Counterfactual mean and 95% confidence interval
             # These are now out-of-sample, hence they are forecasts rather than the in-sample predictions from the effect size model above.
-            cf = arima_cf.get_forecast(end - start + 1, exog=df[variable_name_dict['T']][start:]).summary_frame(alpha=alpha)
+            forecast_steps = end - start + 1
+            cf = arima_cf.get_forecast(int(forecast_steps), exog=df[variable_name_dict['T']][start:]).summary_frame(alpha=alpha)
+            cf[variable_name_dict['D']] = 1
 
         # Now plot the results. We can create a generic method to handle this in all cases now.
         sig_level = np.round(int((1 - alpha)*100), 2)
-        plot_title = "Counterfactual estimate for {0}. Estimated Lift: {1} - {2}% CI ({3}% - {4}%)".format(self.outcome_name, self.effect_size_rel, sig_level, self.effect_size_rel_lower, self.effect_size_rel_upper)
+        plot_title = "Counterfactual estimate for {0}. Estimated Lift: {1}% - {2}% CI ({3}% - {4}%)".format(self.outcome_name,
+                                                                                                            np.round(self.effect_size_rel*100, 3),
+                                                                                                            sig_level,
+                                                                                                            np.round(self.effect_size_rel_lower*100, 3),
+                                                                                                            np.round(self.effect_size_rel_upper*100, 3))
         self.plot_counterfactuals(df=df,
                                   cf=cf,
                                   y_pred=y_pred,
@@ -545,11 +568,13 @@ class InterruptedTimeSeries:
                                   xlabel='Date',
                                   save_path=save_path,
                                   figsize=figsize,
-                                  alpha=alpha)
+                                  alpha=alpha,
+                                  current_time=current_time,
+                                  start=start)
 
         return cf, y_pred
 
-    def plot_counterfactuals(self, df: pd.DataFrame, cf: pd.DataFrame, y_pred: pd.DataFrame, variable_name_dict: dict, scatter_label: str, title: str, xlabel: str, ylabel: str, save_path: str, current_time: str, figsize: tuple = (16, 10), alpha: float = 0.1):
+    def plot_counterfactuals(self, df: pd.DataFrame, cf: pd.DataFrame, y_pred: pd.DataFrame, start, variable_name_dict: dict, scatter_label: str, title: str, xlabel: str, ylabel: str, save_path: str, current_time: str, figsize: tuple = (16, 10), alpha: float = 0.1):
         """
 
         :param df:
@@ -562,16 +587,19 @@ class InterruptedTimeSeries:
         :param ylabel:
         :param save_path:
         :param figsize:
+        :param start:
         :param alpha:
         :param current_time:
         :return:
         """
+
         # Extract column names
         post_treatment_col = variable_name_dict['D']
         time_counter_variable = variable_name_dict['T']
+        outcome_col = variable_name_dict['outcome']
 
         fig, ax = plt.subplots(figsize=figsize)
-        ax.scatter(df[time_counter_variable], df[self.date_col], facecolors='none', edgecolors='steelblue', label=scatter_label)
+        ax.scatter(df[time_counter_variable], df[outcome_col], facecolors='none', edgecolors='steelblue', label=scatter_label)
         ax.plot(df.query("{0}==1".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==1".format(post_treatment_col))['y_hat'], 'b-', label='model predictions')
         ax.plot(df.query("{0}==0".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==0".format(post_treatment_col))['y_hat'], 'b-')
 
@@ -580,8 +608,7 @@ class InterruptedTimeSeries:
             df.query("{0}==1".format(post_treatment_col))[time_counter_variable],
             cf.query("{0}==1".format(post_treatment_col))['mean_ci_lower'],
             cf.query("{0}==1".format(post_treatment_col))['mean_ci_upper'], color='k', alpha=alpha, label='counterfactual 95% CI')
-        # ax.axvline(x=df.query("{0}==1".format(post_treatment_col))[time_counter_variable].min(), linestyle='--', ymax=1, color='red', label='new plan launch')
-        ax.axvline(x=self.treatment_date, linestyle='--', ymax=1, color='red', label='{0} occurred'.format(self.treatment_name))
+        ax.axvline(x=start, linestyle='--', ymax=1, color='red', label='{0} occurred'.format(self.treatment_name))
 
         ax.legend(loc='best')
         plt.xlabel(xlabel, fontsize=16)
