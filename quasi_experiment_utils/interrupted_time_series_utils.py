@@ -58,10 +58,19 @@ class InterruptedTimeSeries:
         :param treatment_date: The date on which the treatment occurred. This is expected to be a python datetime object
         :param date_col: The name of the column containing the dates
         """
-        self.supported_model_types = ('interrupted_time_series', 'naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series', 'regression_discontinuity')
+        self.supported_model_types = ('interrupted_time_series',
+                                      'naive_arima_interrupted_time_series',
+                                      'auto_arima_interrupted_time_series',
+                                      'regression_discontinuity',
+                                      'fuzzy_regression_discontinuity')
         self.interrupted_time_series_vars = ('outcome', 'T', 'D', 'P')
         self.treatment_date = treatment_date
         self.date_col = date_col
+        # Initialize the order and seasonal order parameters for an auto arima model
+        # If auto-arima is used, these will be updated to match the best order and
+        # seasonal order parameter sets identified.
+        self.auto_arima_fit_order = (0, 0, 0)
+        self.auto_arima_fit_seasonal_order = (0, 0, 0, 0)
 
     def interrupted_time_series(self, df, model_type):
         # TODO: this will be a general function to run the entire analysis. It should take a model type, data, and column definition + plot preferences (and saving preferences) and run everything
@@ -74,6 +83,11 @@ class InterruptedTimeSeries:
 
         if save_path is None:
             save_path = os.getcwd()
+
+        # We need to generate the variable_name_dict here as well. It shouldn't be necessary to supply this when using the automated flow since the necessary columns are
+        # calculated in the processing method.
+
+        # if simple arima is selected, we need to assert that arima_params_dict: dict exists. Or at the very least if it doesn't, replace it with an empty dict.
 
         # Generate the current time for plot labeling
 
@@ -139,13 +153,16 @@ class InterruptedTimeSeries:
 
         return df_
 
-    def plot_pre_post_treatment_periods(self, df: pd.DataFrame, current_time: str, outcome_col: str, outcome_name: str, treatment_name: str, save_path: str):
+    def plot_pre_post_treatment_periods(self, df: pd.DataFrame, variable_name_dict: dict, current_time: str, outcome_name: str, treatment_name: str, save_path: str):
         """
         Function to plot the pre-post period.  No model is applied here, this is just for visual inspection
 
         :param df: DataFrame with the data you want to investigate. Should be the output from prep_data_for_interrupted_time_series as some column names are assumed
         :param current_time: String indicating the time the analysis was started. This is used to name output files.
-        :param outcome_col: Name of the column that has the outcome variable
+        :param variable_name_dict: Name of the variables in your DataFrame as keys and how each one maps to one of outcome, T, D, P as values.  See the
+                                   prep_data_for_interrupted_time_series method for definitions of these variables. It is recommended to just pre-process your data through
+                                   prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
+                                   i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
         :param outcome_name: Name of the outcome.
         :param treatment_name: Name of the treatment.
         :param save_path: Optional path to where you want to save the resulting figure. If none, the plot will be saved in the current working directory
@@ -153,8 +170,11 @@ class InterruptedTimeSeries:
         """
         plot_title = "{0} pre/post {1}".format(outcome_name, treatment_name)
 
-        ax = df.query("D==0").plot.scatter(x=self.date_col, y=outcome_col, figsize=(12, 8), label='Pre-treatment', facecolors='none', edgecolors='steelblue', linewidths=2)
-        df.query("D==1").plot.scatter(x=self.date_col, y=outcome_col, label='Post-Treatment', ax=ax, facecolors='none', edgecolors='green', linewidths=2)
+        outcome_col = variable_name_dict['outcome']
+        post_treatment_col = variable_name_dict['D']
+
+        ax = df.query("{0}==0".format(post_treatment_col)).plot.scatter(x=self.date_col, y=outcome_col, figsize=(12, 8), label='Pre-treatment', facecolors='none', edgecolors='steelblue', linewidths=2)
+        df.query("{0}==1".format(post_treatment_col)).plot.scatter(x=self.date_col, y=outcome_col, label='Post-Treatment', ax=ax, facecolors='none', edgecolors='green', linewidths=2)
         ax.axvline(x=self.treatment_date, linestyle='--', ymax=1, color='red', label='Intervention started')
         ax.set_title(plot_title, fontsize=16)
         ax.set_xlabel('Date', fontsize=16)
@@ -167,9 +187,9 @@ class InterruptedTimeSeries:
 
         plt.savefig(file_name, dpi=300, bbox_inches='tight')
 
-    def generate_model(self, df: pd.DataFrame, variable_name_dict: dict, arima_params_dict: dict, model_type: str) -> Union[sm.regression.linear_model.RegressionResultsWrapper,
-                                                                                                                            sms.tsa.arima.model.ARIMAResultsWrapper,
-                                                                                                                            sms.tsa.statespace.sarimax.SARIMAXResultsWrapper]:
+    def generate_model(self, df: pd.DataFrame, variable_name_dict: dict, arima_params_dict: dict, model_type: str, refit_: bool = False) -> Union[sm.regression.linear_model.RegressionResultsWrapper,
+                                                                                                                                                  sms.tsa.arima.model.ARIMAResultsWrapper,
+                                                                                                                                                  sms.tsa.statespace.sarimax.SARIMAXResultsWrapper]:
         """
         Function to generate the desired model to use for effect size and counterfactual estimation. This will set the model specifications for the desired type and fit the model
         to the supplied data in df. It is strongly recommended that you pre-process your data via the prep_data_for_interrupted_time_series method first.
@@ -187,14 +207,18 @@ class InterruptedTimeSeries:
                                   seasonal_period_auto_arima is the periodicity of your data (e.g. 7 days).  Setting this to 1 will override seasonal_auto_arima and only an ARIMA
                                   model will be fit
         :param model_type: Type of model you want to fit.  See then __init__ method for a list of currently supported model types
+        :param refit_: Boolean. True if a call to this function is intend to refit and previously fit model.  Otherwise, false.
 
         :return: A fit model object
         """
-
+        # TODO: do we want to move these checks to the interrupted_time_series method and only do they once? Might want to leave them here in case someone tries to use this as a standalone?
         assert model_type in self.supported_model_types, "model type {0} not one of the supported types: {1}".format(model_type, self.supported_model_types)
         # Make sure the input dict has the necessary variables
-        assert all(name in self.supported_model_types for name in
-                   variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.supported_model_types)
+        # This only applies if this model is not meant to be a refit for estimating a counterfactual
+        # In that case, both D and P would not exist.
+        if not refit_:
+            assert all(name in self.supported_model_types for name in
+                       variable_name_dict), "input variables doesn't contain all necessary variable for interrupted time series. Required variables: {0}".format(self.supported_model_types)
 
         if model_type == 'interrupted_time_series':
 
@@ -244,6 +268,11 @@ class InterruptedTimeSeries:
             model_obj = pm.auto_arima(y=df[outcome_col], X=df[covariate_cols], seasonal=seasonal_, m=seasonal_period, supress_warnings=True, trace=True)
 
             model_ = model_obj.arima_res_
+
+            # We also need to get the oder and seasonal order parameters out of this thing
+            if not refit_:
+                self.auto_arima_fit_order = model_obj.order
+                self.auto_arima_fit_seasonal_order = model_obj.seasonal_order
 
         return model_
 
@@ -375,7 +404,7 @@ class InterruptedTimeSeries:
         if stat_type == 'Ljung-Box' and not residual_independence_verified and model_type == 'naive_arima_interrupted_time_series':
             print('Consider using a different set of model parameters')
             print('Examine the auto-correlations and partial auto-correlations in your data to select order parameters or using the auto_arima_interrupted_time_series option.')
-        if stat_typ == 'Ljung-Box' and not residual_independence_verified and model_type == 'auto_arima_interrupted_time_series':
+        if stat_type == 'Ljung-Box' and not residual_independence_verified and model_type == 'auto_arima_interrupted_time_series':
             print("Consider re-examining the fit of the auto ARIMA model.")
             print("Increase the number of iterations for the parameter search if necessary, or consider using a different analytical approach")
         if not residual_normality_verified:
@@ -387,14 +416,24 @@ class InterruptedTimeSeries:
         else:
             return True
 
-    def calculate_counterfactuals(self, df: pd.DataFrame, post_treatment_col: str, running_variable_col: str, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, outcome_col: str, outcome_name: str, treatment_name: str, alpha: float = 0.05):
-        pass
+    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, outcome_name: str, treatment_name: str, alpha: float = 0.05):
+        """
 
-        # We'll need to have two different workflows, one for the standard OLS and another for both supported ARIMA types
+        :param df:
+        :param arima_params_dict:
+        :param variable_name_dict:
+        :param model_:
+        :param model_type:
+        :param outcome_name:
+        :param treatment_name:
+        :param alpha:
+
+        :return:
+        """
 
         # We need the start and end indices for the post-treatment period
-        start = df.query("{0}==1".format(post_treatment_col)).index.astype(int).min()
-        end = df.query("{0}==1".format(post_treatment_col)).index.astype(int).max()
+        start = df.query("{0}==1".format(variable_name_dict['D'])).index.astype(int).min()
+        end = df.query("{0}==1".format(variable_name_dict['D'])).index.astype(int).max()
 
         if model_type == 'interrupted_time_series':
             predictions = model_.get_prediction(df)
@@ -402,59 +441,47 @@ class InterruptedTimeSeries:
 
             y_pred = predictions.predicted_mean
             y_pred = pd.DataFrame({'y_hat': y_pred})
-            y_pred[post_treatment_col] = df[post_treatment_col].values
+            y_pred[variable_name_dict['D']] = df[variable_name_dict['D']].values
 
             # Make a copy of the original DataFrame
             # This will contain the counterfactual predictions, which assumes no intervention has happened
             # i.e. D = 0 and P = 0 throughout the entire observation period
             df_cf = df.copy()
-            df_cf[post_treatment_col] = 0.0
-            df_cf[running_variable_col] = 0.0
+            df_cf[variable_name_dict['D']] = 0.0
+            df_cf[variable_name_dict['P']] = 0.0
 
             cf = model_.get_prediction(df_cf).summary_frame(alpha=alpha)
             # Restore the true post-treatment variable values so that we can distinguish counterfactual predictions in the actual post treatment period.
-            cf[post_treatment_col] = df[post_treatment_col].values
+            cf[variable_name_dict['D']] = df[variable_name_dict['D']].values
 
         if model_type in ('naive_arima_interrupted_time_series', 'auto_arima_interrupted_time_series'):
-            pass
+            predictions = model_.get_prediction(0, end)
+            # TODO: I don't actually need to use this
+            # summary = predictions.summary_frame(alpha=alpha)
+
+            arima_params_dict_ = arima_params_dict.copy()
+            # Get the order and seasonal order parameters from the original model
+            if model_type == 'auto_arima_interrupted_time_series':
+                arima_params_dict_['order'] = self.auto_arima_fit_order
+                arima_params_dict_['seasonal_order'] = self.auto_arima_fit_seasonal_order
+
+            arima_cf = self.generate_model(df=df[:start],
+                                           variable_name_dict=variable_name_dict,
+                                           arima_params_dict=arima_params_dict_,
+                                           model_type='naive_arima_interrupted_time_series',
+                                           refit_=True)
+            # Model prediction means
+            y_pred = predictions.predicted_mean
+
+            # Counterfactual mean and 95% confidence interval
+            # These are now out-of-sample, hence they are forecasts rather than the in-sample predictions from the effect size model above.
+            cf = arima_cf.get_forecast(end - start + 1, exog=df[variable_name_dict['T']][start:]).summary_frame(alpha=alpha)
+
+        # Now plot the results. We can create a generic method to handle this in all cases now.
+
 
         return cf, y_pred
 
-
-        # for interrupted time series:
-        # beta = model_.params
-        # predictions = model_.get_prediction(df)
-        # summary = predictions.summary_frame(alpha=alpha)
-        #
-        # y_pred = predictions.predicted_mean
-        # y_pred = pd.DataFrame({'y_hat': y_pred})
-        # y_pred[post_treatment_col] = df[post_treatment_col].values
-        #
-        # df_cf = df.copy()
-        # df_cf[post_treatment_col] = 0.0
-        # df_cf[running_variable_col] = 0.0
-        # cf = model_.get_prediction(df_cf).summary_frame(alpha=alpha)
-        #
-        # cf[post_treatment_col] = df[post_treatment_col].values
-        #
-        # return cf, y_pred
-
-        # For any of the ARIMA types:
-        # We'll need to refit an ARIMA model here with the same order parameters (both normal and seasonal, if any) on only the pre-treatment period
-        # The predictions from that model are the counterfactuals. We also set the D and P values to zero in this counterfactual model (or just remove them entirely at this point)
-        # start = 24
-        # end = 48
-        #
-        # predictions = arima_results.get_prediction(0, end-1)
-        # summary = predictions.summary_frame(alpha=0.05)
-        #
-        # arima_cf = ARIMA(df["Y"][:start], df["T"][:start], order=(1,0,0)).fit()
-        #
-        # # Model predictions means
-        # y_pred = predictions.predicted_mean
-        #
-        # # Counterfactual mean and 95% confidence interval
-        # y_cf = arima_cf.get_forecast(24, exog=df["T"][start:]).summary_frame(alpha=0.05)
 
 
 
