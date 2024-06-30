@@ -52,11 +52,10 @@ class InterruptedTimeSeries:
     Fill this in later
     """
 
-    def __init__(self, treatment_date, date_col):
+    def __init__(self, treatment_date):
         """
 
         :param treatment_date: The date on which the treatment occurred. This is expected to be a python datetime object
-        :param date_col: The name of the column containing the dates
         """
         self.supported_model_types = ('interrupted_time_series',
                                       'naive_arima_interrupted_time_series',
@@ -65,54 +64,106 @@ class InterruptedTimeSeries:
                                       'fuzzy_regression_discontinuity')
         self.interrupted_time_series_vars = ('outcome', 'T', 'D', 'P')
         self.treatment_date = treatment_date
-        self.date_col = date_col
+        self.date_col = None
+        self.treatment_name = None
+        self.outcome_name = None
+        self.effect_size_abs = None
+        self.effect_size_abs_lower = None
+        self.effect_size_abs_upper = None
+        self.effect_size_rel = None
+        self.effect_size_rel_lower = None
+        self.effect_size_rel_upper = None
+        self.p_value = None
+        self.counterfactual = None
+        self.outcome_predictions = None
         # Initialize the order and seasonal order parameters for an auto arima model
         # If auto-arima is used, these will be updated to match the best order and
         # seasonal order parameter sets identified.
         self.auto_arima_fit_order = (0, 0, 0)
         self.auto_arima_fit_seasonal_order = (0, 0, 0, 0)
 
-    def interrupted_time_series(self, df, model_type):
-        # TODO: this will be a general function to run the entire analysis. It should take a model type, data, and column definition + plot preferences (and saving preferences) and run everything
+    def interrupted_time_series(self, df: pd.DataFrame, model_type, date_col, outcome_name, outcome_col, treatment_name, arima_params_dict: dict = None, aggregate_data: bool = False, save_path: str = None, figsize: tuple = (16, 10), alpha: float = 0.05):
+        """
 
-        if outcome_name is None:
-            outcome_name = 'outcome'
+        :param df:
+        :param model_type:
+        :param date_col: The name of the column containing the dates
+        :param outcome_name: Name of the outcome
+        :param outcome_col:
+        :param treatment_name: Name of the treatment
+        :param arima_params_dict:
+        :param aggregate_data:
+        :param save_path:
+        :param figsize:
+        :param alpha:
+        :return:
+        """
 
-        if treatment_name is None:
-            treatment_name = 'treatment'
+        self.date_col = date_col
+
+        if self.outcome_name is None:
+            self.outcome_name = 'outcome'
+        else:
+            self.outcome_name = outcome_name
+
+        if self.treatment_name is None:
+            self.treatment_name = 'treatment'
+        else:
+            self.treatment_name = treatment_name
 
         if save_path is None:
             save_path = os.getcwd()
 
-        # We need to generate the variable_name_dict here as well. It shouldn't be necessary to supply this when using the automated flow since the necessary columns are
-        # calculated in the processing method.
+        if arima_params_dict is None:
+            arima_params_dict = {}
 
-        # if simple arima is selected, we need to assert that arima_params_dict: dict exists. Or at the very least if it doesn't, replace it with an empty dict.
+        assert type(arima_params_dict) == dict, "the ARIMA parameters must be input as a dictionary. e.g. {'order': (1, 1, 1), 'seasonal_order': (1, 2, 3, 4)}"
+
+        # Make a copy of the input DataFrame to not inadvertently modify the original in-place
+        df_ = df.copy()
 
         # Generate the current time for plot labeling
+        current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
-        # Aggregate data is instructed to
+        # Aggregate data if instructed to
+        if aggregate_data:
+            print("WARNING: Aggregating time series data. Only the outcome column {0} and the date {1} column will be retained".format(outcome_col, self.date_col))
+            print("WARNING: Aggregation assumes that the sum of the outcome column {0} per timestep is required".format(outcome_col))
+            df_ = df_[[outcome_col, self.date_col]].groupby(self.date_col, as_index=False).sum()
 
         # Prep data
+        df_ = self.prep_data_for_interrupted_time_series(df=df_)
+        variable_name_dict = {'outcome': outcome_col, 'T': 'T', 'D': 'D', 'P': 'P'}
 
         # Plot the treatment pre-post periods
+        self.plot_pre_post_treatment_periods(df=df_, variable_name_dict=variable_name_dict, current_time=current_time, save_path=save_path)
 
         # Build the model object
+        model_ = self.generate_model(df=df_, variable_name_dict=variable_name_dict, arima_params_dict=arima_params_dict, model_type=model_type, refit_=False)
 
-        # Return and interpret results. This will need to be a separate flow for different model types, probably
-        # re-iterate model assumption violation based on the returned value here
+        # Return and interpret results.
+        violated_ = self.ols_model_interpreter(df=df_,
+                                               variable_name_dict=variable_name_dict,
+                                               model_=model_,
+                                               model_type=model_type,
+                                               save_path=save_path,
+                                               current_time=current_time,
+                                               alpha=alpha)
 
-        # Make recommendations for a better approach
-        # THIS IS DONE ABOVE
+        if violated_:
+            print("WARNING: Some or all model assumptions tested have been invalidated!")
 
-        # If it looks like we need to, auto-produce autocorrelation plots
-        # THIS IS DONE ABOVE
+        # Compute counterfactuals and plot along with effect size estimates
+        self.counterfactual, self.outcome_predictions = self.calculate_counterfactuals(df=df_,
+                                                                                       arima_params_dict=arima_params_dict,
+                                                                                       variable_name_dict=variable_name_dict,
+                                                                                       model_=model_,
+                                                                                       model_type=model_type,
+                                                                                       save_path=save_path,
+                                                                                       figsize=figsize,
+                                                                                       alpha=alpha)
 
-        # Compute counterfactuals
-
-        # Plot and return counterfactuals along with effect size estimates
-
-        pass
+        print("Process complete")
 
     def prep_data_for_interrupted_time_series(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -153,7 +204,7 @@ class InterruptedTimeSeries:
 
         return df_
 
-    def plot_pre_post_treatment_periods(self, df: pd.DataFrame, variable_name_dict: dict, current_time: str, outcome_name: str, treatment_name: str, save_path: str):
+    def plot_pre_post_treatment_periods(self, df: pd.DataFrame, variable_name_dict: dict, current_time: str, save_path: str):
         """
         Function to plot the pre-post period.  No model is applied here, this is just for visual inspection
 
@@ -163,12 +214,10 @@ class InterruptedTimeSeries:
                                    prep_data_for_interrupted_time_series method for definitions of these variables. It is recommended to just pre-process your data through
                                    prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
                                    i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
-        :param outcome_name: Name of the outcome.
-        :param treatment_name: Name of the treatment.
         :param save_path: Optional path to where you want to save the resulting figure. If none, the plot will be saved in the current working directory
         :return:
         """
-        plot_title = "{0} pre/post {1}".format(outcome_name, treatment_name)
+        plot_title = "{0} pre/post {1}".format(self.outcome_name, self.treatment_name)
 
         outcome_col = variable_name_dict['outcome']
         post_treatment_col = variable_name_dict['D']
@@ -178,11 +227,11 @@ class InterruptedTimeSeries:
         ax.axvline(x=self.treatment_date, linestyle='--', ymax=1, color='red', label='Intervention started')
         ax.set_title(plot_title, fontsize=16)
         ax.set_xlabel('Date', fontsize=16)
-        ax.set_ylabel(outcome_name, fontsize=16)
+        ax.set_ylabel(self.outcome_name, fontsize=16)
         plt.xticks(rotation=45)
         ax.legend()
 
-        file_name = 'pre_post_{0}_for_metric_{1}_{2}.png'.format(treatment_name, outcome_name, current_time)
+        file_name = 'pre_post_{0}_for_metric_{1}_{2}.png'.format(self.treatment_name, self.outcome_name, current_time)
         file_name = os.path.join(save_path, file_name)
 
         plt.savefig(file_name, dpi=300, bbox_inches='tight')
@@ -278,14 +327,20 @@ class InterruptedTimeSeries:
 
     def ols_model_interpreter(self, df: pd.DataFrame, variable_name_dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, current_time: str, alpha: float = 0.05) -> bool:
         """
+        Function to help interpret the results of an interrupted time series analysis.  Works with all currently supported models.  Will test a minimum number of the assumptions
+        of the underlying regression models.  This should be thought of as a refutation step in a causal inference workflow, although it's not quite that robust at this point.
+        The function will also return recommendations for what to do next should any of the assumptions be violated in your model.
 
-        :param df:
-        :param variable_name_dict:
-        :param model_:
-        :param model_type:
-        :param save_path:
-        :param alpha:
-        :param current_time:
+        :param df: DataFrame with the data you want to investigate. Should be the output from prep_data_for_interrupted_time_series as some column names are assumed
+        :param variable_name_dict: Name of the variables in your DataFrame as keys and how each one maps to one of outcome, T, D, P as values.  See the
+                                   prep_data_for_interrupted_time_series method for definitions of these variables. It is recommended to just pre-process your data through
+                                   prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
+                                   i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
+        :param model_: A fit model object. Should be the output of generate_model
+        :param model_type: model_type: Type of model you want to fit.  See then __init__ method for a list of currently supported model types
+        :param save_path: Optional path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
+        :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance level
+        :param current_time: String containing the current datetime. This is used for generating plot filenames.
 
         :return:
         """
@@ -300,36 +355,36 @@ class InterruptedTimeSeries:
         print(model_.summary())
 
         # get the effect size
-        effect_size_abs = model_.params['D']
-        effect_size_abs_lower = model_.conf_int(alpha=alpha, cols=None)[0][post_treatment_col]
-        effect_size_abs_upper = model_.conf_int(alpha=alpha, cols=None)[1][post_treatment_col]
+        self.effect_size_abs = model_.params['D']
+        self.effect_size_abs_lower = model_.conf_int(alpha=alpha, cols=None)[0][post_treatment_col]
+        self.effect_size_abs_upper = model_.conf_int(alpha=alpha, cols=None)[1][post_treatment_col]
 
-        effect_size_rel = (effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-        effect_size_rel_lower = (effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
-        effect_size_rel_upper = (effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel = (effect_size_abs / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel_lower = (effect_size_abs_lower / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
+        self.effect_size_rel_upper = (effect_size_abs_upper / df.query("{0}==0".format(post_treatment_col))[outcome_col].mean())
 
         # Get p-value
-        p_val = model_.pvalues[post_treatment_col]
-        is_stat_sig = p_val < alpha
+        self.p_value = model_.pvalues[post_treatment_col]
+        is_stat_sig = self.p_value < alpha
 
         print('\n\n')
 
         effect_abs_str = "Absolute effect size estimated at: {0} {1}% CI: ({2} - {3})".format(
-                                                                                              np.round(effect_size_abs, 2),
+                                                                                              np.round(self.effect_size_abs, 2),
                                                                                               np.round(int((1 - alpha) * 100), 2),
-                                                                                              np.round(effect_size_abs_lower, 2),
-                                                                                              np.round(effect_size_abs_upper, 2)
+                                                                                              np.round(self.effect_size_abs_lower, 2),
+                                                                                              np.round(self.effect_size_abs_upper, 2)
                                                                                               )
         effect_rel_str = "Absolute effect size estimated at: {0}% {1}% CI: ({2}% - {3}%)".format(
-                                                                                                 np.round(effect_size_rel * 100, 2),
+                                                                                                 np.round(self.effect_size_rel * 100, 2),
                                                                                                  np.round(int((1 - alpha) * 100), 2),
-                                                                                                 np.round(effect_size_rel_lower * 100, 2),
-                                                                                                 np.round(effect_size_rel_upper * 100, 2)
+                                                                                                 np.round(self.effect_size_rel_lower * 100, 2),
+                                                                                                 np.round(self.effect_size_rel_upper * 100, 2)
                                                                                                 )
         if is_stat_sig:
-            stat_sig_str = "P-value: {0}. The effect is statistically significant".format(np.round(p_val, 3))
+            stat_sig_str = "P-value: {0}. The effect is statistically significant".format(np.round(self.p_value, 3))
         else:
-            stat_sig_str = "P-value: {0}. No evidence for significant effect".format(np.round(p_val, 3))
+            stat_sig_str = "P-value: {0}. No evidence for significant effect".format(np.round(self.p_value, 3))
 
         print(effect_abs_str)
         print('\n')
@@ -416,7 +471,7 @@ class InterruptedTimeSeries:
         else:
             return True
 
-    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, outcome_name: str, treatment_name: str, alpha: float = 0.05):
+    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, figsize: tuple, alpha: float = 0.05):
         """
 
         :param df:
@@ -424,8 +479,8 @@ class InterruptedTimeSeries:
         :param variable_name_dict:
         :param model_:
         :param model_type:
-        :param outcome_name:
-        :param treatment_name:
+        :param figsize:
+        :param save_path: Optional path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
         :param alpha:
 
         :return:
@@ -478,9 +533,66 @@ class InterruptedTimeSeries:
             cf = arima_cf.get_forecast(end - start + 1, exog=df[variable_name_dict['T']][start:]).summary_frame(alpha=alpha)
 
         # Now plot the results. We can create a generic method to handle this in all cases now.
-
+        sig_level = np.round(int((1 - alpha)*100), 2)
+        plot_title = "Counterfactual estimate for {0}. Estimated Lift: {1} - {2}% CI ({3}% - {4}%)".format(self.outcome_name, self.effect_size_rel, sig_level, self.effect_size_rel_lower, self.effect_size_rel_upper)
+        self.plot_counterfactuals(df=df,
+                                  cf=cf,
+                                  y_pred=y_pred,
+                                  variable_name_dict=variable_name_dict,
+                                  scatter_label=self.outcome_name,
+                                  title=plot_title,
+                                  ylabel=self.outcome_name,
+                                  xlabel='Date',
+                                  save_path=save_path,
+                                  figsize=figsize,
+                                  alpha=alpha)
 
         return cf, y_pred
+
+    def plot_counterfactuals(self, df: pd.DataFrame, cf: pd.DataFrame, y_pred: pd.DataFrame, variable_name_dict: dict, scatter_label: str, title: str, xlabel: str, ylabel: str, save_path: str, current_time: str, figsize: tuple = (16, 10), alpha: float = 0.1):
+        """
+
+        :param df:
+        :param cf:
+        :param y_pred:
+        :param variable_name_dict:
+        :param scatter_label:
+        :param title:
+        :param xlabel:
+        :param ylabel:
+        :param save_path:
+        :param figsize:
+        :param alpha:
+        :param current_time:
+        :return:
+        """
+        # Extract column names
+        post_treatment_col = variable_name_dict['D']
+        time_counter_variable = variable_name_dict['T']
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.scatter(df[time_counter_variable], df[self.date_col], facecolors='none', edgecolors='steelblue', label=scatter_label)
+        ax.plot(df.query("{0}==1".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==1".format(post_treatment_col))['y_hat'], 'b-', label='model predictions')
+        ax.plot(df.query("{0}==0".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==0".format(post_treatment_col))['y_hat'], 'b-')
+
+        ax.plot(df.query("{0}==1".format(post_treatment_col))[time_counter_variable], cf.query("{0}==1".format(post_treatment_col))['mean'], 'k.', label='counterfactual')
+        ax.fill_between(
+            df.query("{0}==1".format(post_treatment_col))[time_counter_variable],
+            cf.query("{0}==1".format(post_treatment_col))['mean_ci_lower'],
+            cf.query("{0}==1".format(post_treatment_col))['mean_ci_upper'], color='k', alpha=alpha, label='counterfactual 95% CI')
+        # ax.axvline(x=df.query("{0}==1".format(post_treatment_col))[time_counter_variable].min(), linestyle='--', ymax=1, color='red', label='new plan launch')
+        ax.axvline(x=self.treatment_date, linestyle='--', ymax=1, color='red', label='{0} occurred'.format(self.treatment_name))
+
+        ax.legend(loc='best')
+        plt.xlabel(xlabel, fontsize=16)
+        plt.ylabel(ylabel, fontsize=16)
+        plt.title(title)
+
+        # Generate filename
+        file_name = 'counterfactual_estimate_for_{0}_{1}.png.png'.format(self.treatment_name, current_time)
+        file_name = os.path.join(save_path, file_name)
+
+        plt.savefig(file_name)
 
 
 
