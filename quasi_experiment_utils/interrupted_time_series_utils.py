@@ -52,7 +52,38 @@ style.use('fivethirtyeight')
 
 class InterruptedTimeSeries:
     """
-    Fill this in later
+    Class to instantiate an InterruptedTimeSeries object. This is the basic object for running and storing results from a variety of interrupted time series methods
+
+    This class exposes several options for modeling your data. Currently, the supported models are:
+
+        1. interrupted_time_series:
+            a. This fits a simple Ordinary Least Squares (OLS) model. It regresses the observed outcome on three variables:
+                i. T: a variable which indicates the time passed from start of the observational period
+                ii. D: a dummy indicator variable identifying observations collected before (D = 0) or after (D = 1) the intervention
+                iii. P: a variable indicating the time passes since the intervention has occurred (before the intervention has occurred, P is equal to 0)
+            b. The fit model is then outcome ~ T + D + P
+            c. The model coefficient for D is then the estimated impact of the intervention
+        2. naive_arima_interrupted_time_series:
+            a. Replaces the simple OLS model with a simple ARIMA model
+            b. This can be useful if there is considerable auto-correlation in your data. This can cause the residuals of an OLS model to not be independent, meaning that a model
+               assumption is violated
+            c. The order and seasonal order parameters must be supplied to this model
+        3. auto_arima_interrupted_time_series:
+            a. This is the same as the naive_arima_interrupted_time_series except the order and seasonal order parameters will be selected for you
+        4. More will be added in the future.
+
+        Given the input data, required parameters, and model type, the method interrupted_time_series in this class will:
+
+        1. Provide a plot of the pre-/post-intervention period for visual inspection
+        2. Generate the desired model
+        3. Provide a summary of the estimated effect including a plot of the estimate counterfactuals vs observations
+        4. Validate the fit model by checking a small number of model assumptions
+        5. Provide recommendations of what to try next if model assumptions are violated
+
+        You can, loosely, think of steps 2, 3, and 4 above as a simplified version of a causal inference work flow: indentify, estimate, refute.
+
+        Each step in the process is handled by a specific function. See the documentation for these functions for specific details about how all this works.
+
     """
 
     def __init__(self, treatment_date):
@@ -62,9 +93,12 @@ class InterruptedTimeSeries:
         """
         self.supported_model_types = ('interrupted_time_series',
                                       'naive_arima_interrupted_time_series',
-                                      'auto_arima_interrupted_time_series',
-                                      'regression_discontinuity',
-                                      'fuzzy_regression_discontinuity')
+                                      'auto_arima_interrupted_time_series')
+        # self.supported_model_types = ('interrupted_time_series',
+        #                               'naive_arima_interrupted_time_series',
+        #                               'auto_arima_interrupted_time_series',
+        #                               'regression_discontinuity',
+        #                               'fuzzy_regression_discontinuity')
         self.interrupted_time_series_vars = ('outcome', 'T', 'D', 'P')
         # self.interrupted_time_series_vars = ('T', 'D', 'P')
         self.treatment_date = treatment_date
@@ -86,21 +120,45 @@ class InterruptedTimeSeries:
         self.auto_arima_fit_order = (0, 0, 0)
         self.auto_arima_fit_seasonal_order = (0, 0, 0, 0)
 
-    def interrupted_time_series(self, df: pd.DataFrame, model_type, date_col, outcome_name, outcome_col, treatment_name, arima_params_dict: dict = None, aggregate_data: bool = False, save_path: str = None, figsize: tuple = (16, 10), alpha: float = 0.05):
+    def interrupted_time_series(self, df: pd.DataFrame, model_type: str, date_col: str, outcome_col: str, outcome_name: str = None, treatment_name: str = None, arima_params_dict: dict = None, aggregate_data: bool = False, save_path: str = None, figsize: tuple = (16, 10), alpha: float = 0.05):
         """
+        Function to handle an interrupted time series analysis from end to end.  All that is required is an input dataframe with a datetime like column, and an outcome column.
+        Ideally, the data represents one aggregate observation per time period (e.g. total sales per day).  If this is not the case, there is an option to auto-aggregate the data
+        for you.  However, this currently only work with summation.
 
-        :param df:
-        :param model_type:
+        This method exposes several options for modeling your data. See the InterruptedTimeSeries class docstrings for specific details.
+
+        Given the input data, required parameters, and model type, this method will:
+
+        1. Provide a plot of the pre-/post-intervention period for visual inspection
+        2. Generate the desired model
+        3. Provide a summary of the estimated effect including a plot of the estimate counterfactuals vs observations
+        4. Validate the fit model by checking a small number of model assumptions
+        5. Provide recommendations of what to try next if model assumptions are violated
+
+        You can, loosely, think of steps 2, 3, and 4 above as a simplified version of a causal inference work flow: indentify, estimate, refute.
+
+        :param df: DataFrame with the time series data you want to study. At a minimum requires a date column and another column with the observed quantity
+        :param model_type: String indicating the model type you want for the counterfactual.  See the supported_model_types variable in the __init__ method to see which model types
+                           are currently supported
         :param date_col: The name of the column containing the dates
         :param outcome_name: Name of the outcome
-        :param outcome_col:
+        :param outcome_col: Name of the column in the input DataFrame that has the outcome observations
         :param treatment_name: Name of the treatment
-        :param arima_params_dict:
-        :param aggregate_data:
-        :param save_path:
-        :param figsize:
-        :param alpha:
-        :return:
+        :param arima_params_dict: Dictionary with parameters to pass to ARIMA models.  naive_arima_interrupted_time_series will look for two keys: order and seasonal_order. Both
+                                  are expected to have tuples as items.  See here for a definition of what goes into the tuples:
+                                  https://www.statsmodels.org/stable/generated/statsmodels.tsa.arima.model.ARIMA.html
+                                  auto_arima_interrupted_time_series will look for two other keys (and ignore order and seasonal_order); seasonal_auto_arima and
+                                  seasonal_period_auto_arima. seasonal_auto_arima is a Boolean. If True, the model will auto-fit a SARIMA model, otherwise will default to ARIMA.
+                                  seasonal_period_auto_arima is the periodicity of your data (e.g. 7 days).  Setting this to 1 will override seasonal_auto_arima and only an ARIMA
+                                  model will be fit.  If this is None, then all order and seasonal order parameters will be assumed 0.
+        :param aggregate_data: Boolean. If your data is not already pre-aggregated by datetime-grain/outcome, you can set this to True and have the aggregation done for you.  This
+                               currently only supports summation as an aggregation function
+        :param save_path: Optional path to where you want to save the resulting figure. If none, the plot will be saved in the current working directory
+        :param figsize: Optional tuple containing the size of the output figure which plots model predictions and counterfactuals. Default is (16, 10).
+        :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance leve
+
+        :return: Nothing
         """
 
         self.date_col = date_col
@@ -221,7 +279,8 @@ class InterruptedTimeSeries:
                                    prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
                                    i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
         :param save_path: Optional path to where you want to save the resulting figure. If none, the plot will be saved in the current working directory
-        :return:
+
+        :return: Nothing
         """
         plot_title = "{0} pre/post {1}".format(self.outcome_name, self.treatment_name)
 
@@ -266,7 +325,8 @@ class InterruptedTimeSeries:
 
         :return: A fit model object
         """
-        # TODO: do we want to move these checks to the interrupted_time_series method and only do they once? Might want to leave them here in case someone tries to use this as a standalone?
+
+        # TODO: Move these checks to the interrupted_time_series method and only do they once? Might want to leave them here in case someone tries to use this as a standalone?
         assert model_type in self.supported_model_types, "model type {0} not one of the supported types: {1}".format(model_type, self.supported_model_types)
         # Make sure the input dict has the necessary variables
         # This only applies if this model is not meant to be a refit for estimating a counterfactual
@@ -346,12 +406,12 @@ class InterruptedTimeSeries:
                                    prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
                                    i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
         :param model_: A fit model object. Should be the output of generate_model
-        :param model_type: model_type: Type of model you want to fit.  See then __init__ method for a list of currently supported model types
+        :param model_type: Type of model you want to fit.  See then __init__ method for a list of currently supported model types
         :param save_path: Optional path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
         :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance level
         :param current_time: String containing the current datetime. This is used for generating plot filenames.
 
-        :return:
+        :return: Boolean. True if any of the tested model assumptions have been invalidated. Otherwise, False.
         """
         # TODO: I can remove this here. This is done above and no one should be using this method as a standalone
         assert model_type in self.supported_model_types, "model type {0} not one of the supported types: {1}".format(model_type, self.supported_model_types)
@@ -456,13 +516,13 @@ class InterruptedTimeSeries:
             # Generate autocorrelation plot for the model residuals
             file_name_auto_corr = 'autocorrelation_of_residuals_{0}.png'.format(current_time)
             file_name_auto_corr = os.path.join(save_path, file_name_auto_corr)
-            sm.graphics.tsa.plot_acf(model_.resid, lags=10)
+            sm.graphics.tsa.plot_acf(model_.resid, lags=10, title='Autocorrelation of model residuals')
             plt.savefig(file_name_auto_corr)
 
             # Generate partial autocorrelation plot for the model residuals
             file_name_partial_auto_corr = 'partial_autocorrelation_of_residuals_{0}.png'.format(current_time)
             file_name_partial_auto_corr = os.path.join(save_path, file_name_partial_auto_corr)
-            sm.graphics.tsa.plot_pacf(model_.resid, lags=10)
+            sm.graphics.tsa.plot_pacf(model_.resid, lags=10, title='Partial Autocorrelation of model residuals')
             plt.savefig(file_name_partial_auto_corr)
 
         # Make recommendations about what to do
@@ -487,20 +547,41 @@ class InterruptedTimeSeries:
         else:
             return False
 
-    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, figsize: tuple, current_time: str, alpha: float = 0.05):
+    def calculate_counterfactuals(self, df: pd.DataFrame, arima_params_dict: dict, variable_name_dict: dict, model_: Union[sm.regression.linear_model.RegressionResultsWrapper, sms.tsa.arima.model.ARIMAResultsWrapper, sms.tsa.statespace.sarimax.SARIMAXResultsWrapper], model_type: str, save_path: str, figsize: tuple, current_time: str, alpha: float = 0.05) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
+        Function to calculate the counterfactual provided a model type and data. This will provide model predictions in both the pre- and post-treatment periods as well as
+        counterfactual values from the model in the post-treatment period (along with confidence intervals).
 
-        :param df:
-        :param arima_params_dict:
-        :param variable_name_dict:
-        :param model_:
-        :param model_type:
-        :param figsize:
-        :param current_time:
-        :param save_path: Optional path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
-        :param alpha:
+        For the simple interrupted_time_series type, this just sets the post-treatment variable (D) and the time since intervention variable (P) to zero and uses the pre-fit model
+        to predict the outcome in the post-treatment period. These are the modeled counterfactuals.
 
-        :return:
+        For both the naive_arima_interrupted_time_series and auto_arima_interrupted_time_series methods, a new model using the same parameters as the one fit to estimate the effect
+        size will be fit on the pre-treatment period with the post-treatment variable (D) and the time since intervention variable (P) to zero and retrains the model. Forecasts
+        from this model on the post-treatment period are then the counterfactual estimates.  This is necessary here as the time series models may rely on previous data points to
+        make forecasts.  i.e. forecasting the counterfactual 3 days after the intervention requires knowing what happened 2 days after the intervention. This would not be a
+        counterfactual estimate then as the model already knows what happened. Hence, a new model must be fit using the same parameters as the full model.
+
+        :param df: DataFrame with the data you want to investigate. Should be the output from prep_data_for_interrupted_time_series as some column names are assumed
+        :param arima_params_dict: Dictionary with parameters to pass to ARIMA models.  naive_arima_interrupted_time_series will look for two keys: order and seasonal_order. Both
+                                  are expected to have tuples as items.  See here for a definition of what goes into the tuples:
+                                  https://www.statsmodels.org/stable/generated/statsmodels.tsa.arima.model.ARIMA.html
+                                  auto_arima_interrupted_time_series will look for two other keys (and ignore order and seasonal_order); seasonal_auto_arima and
+                                  seasonal_period_auto_arima. seasonal_auto_arima is a Boolean. If True, the model will auto-fit a SARIMA model, otherwise will default to ARIMA.
+                                  seasonal_period_auto_arima is the periodicity of your data (e.g. 7 days).  Setting this to 1 will override seasonal_auto_arima and only an ARIMA
+                                  model will be fit
+        :param variable_name_dict: Name of the variables in your DataFrame as keys and how each one maps to one of outcome, T, D, P as values.  See the
+                                   prep_data_for_interrupted_time_series method for definitions of these variables. It is recommended to just pre-process your data through
+                                   prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
+                                   i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
+        :param model_: A fit model object. Should be the output of generate_model
+        :param model_type: Type of model you want to fit.  See then __init__ method for a list of currently supported model types
+        :param figsize: Tuple containing the size of the output figure which plots model predictions and counterfactuals.
+        :param save_path: Path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
+        :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance level
+        :param current_time: String containing the current datetime. This is used for generating plot filenames.
+
+        :return: Two DataFrames. One containing the estimated counterfactuals, and another the model predictions in the pre- and post-treatment periods (the latter are not
+                 counterfactuals as they do not represent the scenario where the intervention never occurred).
         """
 
         # We need the start and end indices for the post-treatment period
@@ -576,21 +657,27 @@ class InterruptedTimeSeries:
 
     def plot_counterfactuals(self, df: pd.DataFrame, cf: pd.DataFrame, y_pred: pd.DataFrame, start, variable_name_dict: dict, scatter_label: str, title: str, xlabel: str, ylabel: str, save_path: str, current_time: str, figsize: tuple = (16, 10), alpha: float = 0.1):
         """
+        Function to plot the estimated counterfactuals, model predictions, and true observations.  The plot will also contain the estimated relative effect size, and its confidence
+        interval at any desired level of significance (default is 90%).
 
-        :param df:
-        :param cf:
-        :param y_pred:
-        :param variable_name_dict:
-        :param scatter_label:
-        :param title:
-        :param xlabel:
-        :param ylabel:
-        :param save_path:
-        :param figsize:
-        :param start:
-        :param alpha:
-        :param current_time:
-        :return:
+        :param df: DataFrame with the data you want to investigate. Should be the output from prep_data_for_interrupted_time_series as some column names are assumed
+        :param cf: DataFrame containing the counterfactual estimates. Should be the first output from the function calculate_counterfactuals
+        :param y_pred: DataFrame containing the model predictions. Should be the second output from the function calculate_counterfactuals
+        :param variable_name_dict: Name of the variables in your DataFrame as keys and how each one maps to one of outcome, T, D, P as values.  See the
+                                   prep_data_for_interrupted_time_series method for definitions of these variables. It is recommended to just pre-process your data through
+                                   prep_data_for_interrupted_time_series. In this all you need to do is specify the outcome column name.
+                                   i.e. variable_name_dict = {'outcome': OUTCOME_COLUMN_NAME_IN_DATA, 'T': 'T', 'D': 'D', 'P': 'P'}
+        :param scatter_label: Legend label for the actual true observations (these are plotted as a scatter plot with the predictions and counterfactuals overlaid)
+        :param title: Title for the plot
+        :param xlabel: Label for the plot's x-axis
+        :param ylabel: Label for the plot' y-axis
+        :param save_path: Tuple containing the size of the output figure which plots model predictions and counterfactuals.
+        :param figsize: Path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
+        :param start: The indiex in the input DataFrame df corresponding to the first time the intervention occurred (i.e. the treatment date)
+        :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance level
+        :param current_time: String containing the current datetime. This is used for generating plot filenames.
+
+        :return: Nothing
         """
 
         # Extract column names
