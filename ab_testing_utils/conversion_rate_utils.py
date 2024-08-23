@@ -696,6 +696,7 @@ class ConversionExperiment:
             df_ = list_of_dfs[0].T
             treatment_name_ = [x for x in df_.columns if '_mean' in x and control_name not in x][0].split('_mean')[0]
             self.plot_ab_test_results(df=df_, control_name=control_name, treatment_name=treatment_name_, alpha=alpha, save_path=save_path, output_filename=output_filename)
+            return None
 
         current_time = strftime('%Y-%m-%d_%H%M%S', gmtime())
 
