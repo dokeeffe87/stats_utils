@@ -673,7 +673,7 @@ class InterruptedTimeSeries:
         :param ylabel: Label for the plot' y-axis
         :param save_path: Tuple containing the size of the output figure which plots model predictions and counterfactuals.
         :param figsize: Path to where you want to save any generated figures. If none, the plots will be saved in the current working directory
-        :param start: The indiex in the input DataFrame df corresponding to the first time the intervention occurred (i.e. the treatment date)
+        :param start: The index in the input DataFrame df corresponding to the first time the intervention occurred (i.e. the treatment date)
         :param alpha: The probability of rejecting the null hypothesis when the null hypothesis is true. i.e. 1 - alpha = significance level
         :param current_time: String containing the current datetime. This is used for generating plot filenames.
 
@@ -686,16 +686,16 @@ class InterruptedTimeSeries:
         outcome_col = variable_name_dict['outcome']
 
         fig, ax = plt.subplots(figsize=figsize)
-        ax.scatter(df[time_counter_variable], df[outcome_col], facecolors='none', edgecolors='steelblue', label=scatter_label)
-        ax.plot(df.query("{0}==1".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==1".format(post_treatment_col))['y_hat'], 'b-', label='model predictions')
-        ax.plot(df.query("{0}==0".format(post_treatment_col))[time_counter_variable], y_pred.query("{0}==0".format(post_treatment_col))['y_hat'], 'b-')
+        ax.scatter(df[self.date_col], df[outcome_col], facecolors='none', edgecolors='steelblue', label=scatter_label)
+        ax.plot(df.query("{0}==1".format(post_treatment_col))[self.date_col], y_pred.query("{0}==1".format(post_treatment_col))['y_hat'], 'b-', label='model predictions')
+        ax.plot(df.query("{0}==0".format(post_treatment_col))[self.date_col], y_pred.query("{0}==0".format(post_treatment_col))['y_hat'], 'b-')
 
-        ax.plot(df.query("{0}==1".format(post_treatment_col))[time_counter_variable], cf.query("{0}==1".format(post_treatment_col))['mean'], 'k.', label='counterfactual')
+        ax.plot(df.query("{0}==1".format(post_treatment_col))[self.date_col], cf.query("{0}==1".format(post_treatment_col))['mean'], 'k.', label='counterfactual')
         ax.fill_between(
-            df.query("{0}==1".format(post_treatment_col))[time_counter_variable],
+            df.query("{0}==1".format(post_treatment_col))[self.date_col],
             cf.query("{0}==1".format(post_treatment_col))['mean_ci_lower'],
             cf.query("{0}==1".format(post_treatment_col))['mean_ci_upper'], color='k', alpha=alpha, label='counterfactual 95% CI')
-        ax.axvline(x=start, linestyle='--', ymax=1, color='red', label='{0} occurred'.format(self.treatment_name))
+        ax.axvline(x=self.treatment_date, linestyle='--', ymax=1, color='red', label='{0} occurred'.format(self.treatment_name))
 
         ax.legend(loc='best')
         plt.xlabel(xlabel, fontsize=16)
@@ -707,12 +707,3 @@ class InterruptedTimeSeries:
         file_name = os.path.join(save_path, file_name)
 
         plt.savefig(file_name)
-
-
-
-
-
-
-
-
-
