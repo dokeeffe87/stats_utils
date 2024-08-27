@@ -703,7 +703,7 @@ class InterruptedTimeSeries:
         plt.title(title)
 
         # Generate filename
-        file_name = 'counterfactual_estimate_for_{0}_{1}.png.png'.format(self.treatment_name, current_time)
+        file_name = 'counterfactual_estimate_for_{0}_{1}.png'.format(self.treatment_name, current_time)
         file_name = os.path.join(save_path, file_name)
 
         plt.savefig(file_name)
