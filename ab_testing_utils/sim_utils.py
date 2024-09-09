@@ -196,8 +196,8 @@ class SimulateSkewedContinuous(SimulateABTest):
             r = list(stats.gamma.rvs(size=num_samples, a=a, scale=scale))
             outcomes_ = outcomes_ + r
 
-        df_['outcome'] = outcomes_
-        df_['outcome'] = df_['outcome'].apply(lambda x: np.round(x, rounding))
+        df_[outcome_col_name] = outcomes_
+        df_[outcome_col_name] = df_[outcome_col_name].apply(lambda x: np.round(x, rounding))
 
         return df_
 
