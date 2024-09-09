@@ -180,13 +180,50 @@ class SimulateSkewedContinuous(SimulateABTest):
     # Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
     # Add support for dropout, model continuous outcomes with gamma, zero inflation as well
 
-    def simulate_skewed_experiment(self):
-        # Use this to simulate a 2-variant skewed AB test.
-        # TODO: generalize to n-variants
+    def simulate_skewed_experiment(self, daily_num_observations: int, number_of_days_for_experiment: int, group_col: str, p_vals: Union[list, str, np.ndarray] = 'equal', zero_skewed_outcome=False, a: float = 0.01, scale: int = 10000, outcome_col_name: str = 'outcome', rounding: int = 3, loc: float = 0) -> pd.DataFrame:
+        # TODO: Generalize to n variants
         pass
 
     @staticmethod
+    def simulate_normal_distributed_outcomes(df: pd.DataFrame, loc: float = 0, scale: float = 1, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
+        """
+        Function to simulate a continuous outcome which follows a normalize distribution
+
+        :param df: DataFrame containing a list of units you want to simulate an outcome for.  Each row must be a uniquely observed unit
+        :param loc: loc parameter for the rvs method of the norm distribution in scipy.stats
+        :param scale: scale parameter for the rvs method of the norm distribution in scipy.stats
+        :param outcome_col_name: Name you want for the output column containing the simulated values
+        :param rounding: The degree of rounding to apply.  If the continuous outcome is meant to be a dollar value, for example, you should set this to 2
+
+        :return: The original input DataFrame with the additional outcome_col_name column containing simulated values
+        """
+        # TODO: Merge this with the simulate_zero_skewed_outcomes function. Doesn't really make sense to have separate functions to do this
+        outcomes_ = []
+        df_ = df.copy()
+
+        for d_ in df_['day'].unique():
+            num_samples = df_.query("day=='{0}'".format(d_))['units'].sum()
+            r = list(stats.norm.rvs(size=num_samples, loc=loc, scale=scale))
+            outcomes_ = outcomes_ + r
+
+        df_[outcome_col_name] = outcomes_
+        df_[outcome_col_name] = df_[outcome_col_name].apply(lambda x: np.round(x, rounding))
+
+        return df_
+
+    @staticmethod
     def simulate_zero_skewed_outcomes(df: pd.DataFrame, a: float = 0.01, scale: int = 10000, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
+        """
+        Function to simulated highly skewed continuous outcomes on input data
+
+        :param df: DataFrame containing a list of units you want to simulate an outcome for.  Each row must be a uniquely observed unit
+        :param a: a parameter for the rvs method of the Gamma distribution in scipy.stats
+        :param scale: scale parameter for the rvs method of the Gamma distribution in scipy.stats
+        :param outcome_col_name: Name you want for the output column containing the simulated values
+        :param rounding: The degree of rounding to apply.  If the continuous outcome is meant to be a dollar value, for example, you should set this to 2
+
+        :return: The original input DataFrame with the additional outcome_col_name column containing simulated values
+        """
 
         outcomes_ = []
         df_ = df.copy()
@@ -203,6 +240,14 @@ class SimulateSkewedContinuous(SimulateABTest):
 
     @staticmethod
     def adjust_for_dropout(df: pd.DataFrame, dropout_prob: float, outcome_col_name: str = 'outcome', adjust_dropout_prob: bool = True):
+        """
+
+        :param df:
+        :param dropout_prob:
+        :param outcome_col_name:
+        :param adjust_dropout_prob:
+        :return:
+        """
 
         df_zeros = df.query("@outcome_col_name==0")
         df_not_zeros = df.query("@outcome_col_name > 0")
