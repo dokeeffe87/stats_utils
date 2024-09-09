@@ -176,7 +176,7 @@ class SimulateABTest:
         return df_exp
 
 
-class SimulateSkewedContinuous:
+class SimulateSkewedContinuous(SimulateABTest):
     # Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
     # Add support for dropout, model continuous outcomes with gamma, zero inflation as well
 
