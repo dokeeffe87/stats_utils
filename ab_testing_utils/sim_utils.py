@@ -229,13 +229,13 @@ class SimulateSkewedContinuous(SimulateABTest):
             else:
                 group_index = int(g_.split('_')[-1])
             if zero_skewed_outcome:
-                df_ = self.simulate_zero_skewed_outcomes(df=df_exp.query("@group_col=='{0}".format(g_)),
+                df_ = self.simulate_zero_skewed_outcomes(df=df_exp.query("{0}=='{1}'".format(group_col, g_)),
                                                          a=a_params[group_index],
                                                          scale=scale_params[group_index],
                                                          outcome_col_name=outcome_col_name,
                                                          rounding=rounding)
             else:
-                df_ = self.simulate_normal_distributed_outcomes(df=df_exp.query("@group_col=='{0}".format(g_)),
+                df_ = self.simulate_normal_distributed_outcomes(df=df_exp.query("{0}=='{1}'".format(group_col, g_)),
                                                                 loc=loc_params[group_index],
                                                                 scale=scale_params[group_index],
                                                                 outcome_col_name=outcome_col_name,
@@ -245,7 +245,6 @@ class SimulateSkewedContinuous(SimulateABTest):
         df_simulated = pd.concat(outcomes_)
 
         return df_simulated
-
 
     @staticmethod
     def simulate_normal_distributed_outcomes(df: pd.DataFrame, loc: float = 0, scale: float = 1, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
@@ -326,4 +325,3 @@ class SimulateSkewedContinuous(SimulateABTest):
         df_with_do = pd.concat([df_zeros, df_not_zeros])
 
         return df_with_do
-
