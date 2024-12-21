@@ -238,7 +238,7 @@ class SimulateSkewedContinuous(SimulateABTest):
                 df_ = self.simulate_normal_distributed_outcomes(df=df_exp.query("@group_col=='{0}".format(g_)),
                                                                 loc=loc_params[group_index],
                                                                 scale=scale_params[group_index],
-                                                                outcome_col_name=outcome_col_name, 
+                                                                outcome_col_name=outcome_col_name,
                                                                 rounding=rounding)
             outcomes_.append(df_)
 
