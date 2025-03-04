@@ -95,9 +95,9 @@ class SimulateABTest:
         """
         Generates hypothetical conversion events. Conversion events are modeled by a binomial distribution.
 
-        :param df: DataFrame where each row represents a unit. Must be labled by assignment group
+        :param df: DataFrame where each row represents a unit. Must be labeled by assignment group
         :param conversion_rate_dict: A dictionary which contains the hypothetical conversion probabilities for each variant in the input DataFrame. The keys should be the variant
-                                     names, and the values the conversion probabolities
+                                     names, and the values the conversion probabilities
         :param group_col: Name of the column in the input DataFrame which contains the group assignments
 
         :return: A copy of the input DataFrame with a column called conversion. This will be a binary 0 or 1 representing non conversion or conversion, respectively.
@@ -176,17 +176,116 @@ class SimulateABTest:
         return df_exp
 
 
-class SimulateSkewedContinuous:
+class SimulateSkewedContinuous(SimulateABTest):
     # Just use the simulate_expected_daily_visitors and assign_randomly methods from the SimulateAB class
     # Add support for dropout, model continuous outcomes with gamma, zero inflation as well
 
-    def simulate_skewed_experiment(self):
-        # Use this to simulate a 2-variant skewed AB test.
-        # TODO: generalize to n-variants
-        pass
+    def simulate_skewed_experiment(self, daily_num_observations: int, number_of_days_for_experiment: int, group_col: str, p_vals: Union[list, str, np.ndarray] = 'equal', zero_skewed_outcome=False, a_params: tuple[float] = (0.01, 0.05), scale_params: tuple[float] = (10000, 11000), outcome_col_name: str = 'outcome', rounding: int = 3, loc_params: tuple[float] = (0, 0.1)) -> pd.DataFrame:
+        """
+
+        :param daily_num_observations: Integer number of days you want to simulate the experiment for
+        :param number_of_days_for_experiment: Integer average number of expected visitors per day
+        :param group_col: Name for the column you want to contain the assignments in the output
+        :param p_vals: Assignment probabilities to each variant. Must be iterable, or 'equal'. 'equal' just assumes that each variant has equal probability of assignment
+        :param zero_skewed_outcome: Boolean. If True, will simulate a zero inflated outcome as a Gamma distribution. Otherwise, a normal distribution will be used
+        :param a_params: Tuple of a parameters for the rvs method of the Gamma distribution in scipy.stats. First value is assumed to be for the control group, the remainder for treatment groups
+                         Ignored if zero_skewed_outcome = False
+        :param scale_params: Tuple of scale parameters for the rvs method of the Gamma distribution in scipy.stats or the norm distribution in scipy.stats. First value is assumed to be for the
+                             control group, the remainder for treatment groups
+        :param outcome_col_name: Name you want for the output column containing the simulated values
+        :param rounding: The degree of rounding to apply.  If the continuous outcome is meant to be a dollar value, for example, you should set this to 2
+        :param loc_params: Tuple of loc parameters for the rvs method of the norm distribution in scipy.stats. First value is assumed to be for the
+                           control group, the remainder for treatment groups Ignored if zero_skewed_outcome = True
+        :return:
+        """
+
+        # Calculate derived values from inputs
+        n_variants = len(scale_params)
+
+        if type(p_vals) == str:
+            assert p_vals == 'equal', 'The only accepted string value for this parameter is equal'
+        else:
+            assert type(p_vals) in [list, np.ndarray], "if p_vals is not 'equal', then it must be either a list or np.ndarray"
+            assert sum(p_vals) == 1, "probabilities of assignment to each group {0} must sum to 1".format(p_vals)
+            assert len(p_vals) == len(scale_params), "There must be the same number of assignment probabilities as number of distribution parameters"
+
+        df_sim = self.simulate_expected_daily_visitors(number_of_days_for_experiment=number_of_days_for_experiment, daily_num_observations=daily_num_observations)
+        df_exp = self.assign_randomly(df=df_sim, n_variants=n_variants, p_vals=p_vals, group_col=group_col)
+
+        # check summary for assignments
+        print("Simulated group sizes: \n")
+        print(df_exp[group_col].value_counts(normalize=True))
+
+        # Check daily summary stats for assignments
+        print("\n")
+        print("Simulated daily group sizes: \n")
+        print(df_exp[['day', group_col]].groupby('day').value_counts(normalize=True))
+        print("\n")
+
+        outcomes_ = []
+        for g_ in df_exp[group_col].unique():
+            if g_ == 'control':
+                group_index = 0
+            else:
+                group_index = int(g_.split('_')[-1])
+            if zero_skewed_outcome:
+                df_ = self.simulate_zero_skewed_outcomes(df=df_exp.query("{0}=='{1}'".format(group_col, g_)),
+                                                         a=a_params[group_index],
+                                                         scale=scale_params[group_index],
+                                                         outcome_col_name=outcome_col_name,
+                                                         rounding=rounding)
+            else:
+                df_ = self.simulate_normal_distributed_outcomes(df=df_exp.query("{0}=='{1}'".format(group_col, g_)),
+                                                                loc=loc_params[group_index],
+                                                                scale=scale_params[group_index],
+                                                                outcome_col_name=outcome_col_name,
+                                                                rounding=rounding)
+            outcomes_.append(df_)
+
+        df_simulated = pd.concat(outcomes_)
+
+        return df_simulated
+
+    @staticmethod
+    def simulate_normal_distributed_outcomes(df: pd.DataFrame, loc: float = 0, scale: float = 1, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
+        """
+        Function to simulate a continuous outcome which follows a normal distribution
+
+        :param df: DataFrame containing a list of units you want to simulate an outcome for.  Each row must be a uniquely observed unit
+        :param loc: loc parameter for the rvs method of the norm distribution in scipy.stats
+        :param scale: scale parameter for the rvs method of the norm distribution in scipy.stats
+        :param outcome_col_name: Name you want for the output column containing the simulated values
+        :param rounding: The degree of rounding to apply.  If the continuous outcome is meant to be a dollar value, for example, you should set this to 2
+
+        :return: The original input DataFrame with the additional outcome_col_name column containing simulated values
+        """
+        # TODO: Merge this with the simulate_zero_skewed_outcomes function. Doesn't really make sense to have separate functions to do this
+        outcomes_ = []
+        df_ = df.copy()
+
+        for d_ in df_['day'].unique():
+            num_samples = df_.query("day=='{0}'".format(d_))['units'].sum()
+            r = list(stats.norm.rvs(size=num_samples, loc=loc, scale=scale))
+            outcomes_ = outcomes_ + r
+
+        df_[outcome_col_name] = outcomes_
+        df_[outcome_col_name] = df_[outcome_col_name].apply(lambda x: np.round(x, rounding))
+
+        return df_
 
     @staticmethod
     def simulate_zero_skewed_outcomes(df: pd.DataFrame, a: float = 0.01, scale: int = 10000, outcome_col_name: str = 'outcome', rounding: int = 3) -> pd.DataFrame:
+        """
+        Function to simulated highly skewed continuous outcomes on input data
+
+        :param df: DataFrame containing a list of units you want to simulate an outcome for.  Each row must be a uniquely observed unit
+        :param a: a parameter for the rvs method of the Gamma distribution in scipy.stats
+        :param scale: scale parameter for the rvs method of the Gamma distribution in scipy.stats
+        :param outcome_col_name: Name you want for the output column containing the simulated values
+        :param rounding: The degree of rounding to apply.  If the continuous outcome is meant to be a dollar value, for example, you should set this to 2
+
+        :return: The original input DataFrame with the additional outcome_col_name column containing simulated values
+        """
 
         outcomes_ = []
         df_ = df.copy()
@@ -196,13 +295,21 @@ class SimulateSkewedContinuous:
             r = list(stats.gamma.rvs(size=num_samples, a=a, scale=scale))
             outcomes_ = outcomes_ + r
 
-        df_['outcome'] = outcomes_
-        df_['outcome'] = df_['outcome'].apply(lambda x: np.round(x, rounding))
+        df_[outcome_col_name] = outcomes_
+        df_[outcome_col_name] = df_[outcome_col_name].apply(lambda x: np.round(x, rounding))
 
         return df_
 
     @staticmethod
     def adjust_for_dropout(df: pd.DataFrame, dropout_prob: float, outcome_col_name: str = 'outcome', adjust_dropout_prob: bool = True):
+        """
+
+        :param df:
+        :param dropout_prob:
+        :param outcome_col_name:
+        :param adjust_dropout_prob:
+        :return:
+        """
 
         df_zeros = df.query("@outcome_col_name==0")
         df_not_zeros = df.query("@outcome_col_name > 0")
@@ -218,4 +325,3 @@ class SimulateSkewedContinuous:
         df_with_do = pd.concat([df_zeros, df_not_zeros])
 
         return df_with_do
-
