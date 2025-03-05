@@ -10,6 +10,8 @@ ___  ______  ___ _____   _____       _            _       _
 Author: Dan (dan.okeeffe@shopify.com)
 
 Use historical data to calculate a minimum measurable effect size for use in online A/B tests, given a desired power.  This is done through randomization inference.
+
+Largely adapted from: https://medium.com/towards-data-science/practical-experiment-fundamentals-all-data-scientists-should-know-f11c77fea1b2
 """
 
 # import modules
