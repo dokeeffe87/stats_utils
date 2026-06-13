@@ -1,3 +1,18 @@
 /notebooks/scratch.ipynb
 /notebooks/sig_test.ipynb
 /notebooks/Untitled.ipynb
+
+# uv / Python environment
+.venv/
+.python-version.local
+
+# Python build/cache artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
