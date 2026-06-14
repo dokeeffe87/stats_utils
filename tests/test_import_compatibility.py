@@ -1,0 +1,21 @@
+"""Compatibility checks for legacy and modern import paths."""
+
+from ab_testing_utils.conversion_rate_utils import ConversionExperiment as LegacyConversionExperiment
+from ab_testing_utils.minimum_detectable_effect_size import compute_mme as legacy_compute_mme
+from ab_testing_utils.sim_utils import SimulateABTest as LegacySimulateABTest
+from ab_testing_utils.skewed_metric_utils import RandomizationInference as LegacyRandomizationInference
+from quasi_experiment_utils.interrupted_time_series_utils import InterruptedTimeSeries as LegacyInterruptedTimeSeries
+
+from stats_utils.ab_testing.conversion_rate import ConversionExperiment as NewConversionExperiment
+from stats_utils.ab_testing.minimum_detectable_effect_size import compute_mme as new_compute_mme
+from stats_utils.ab_testing.simulation import SimulateABTest as NewSimulateABTest
+from stats_utils.ab_testing.skewed_metrics import RandomizationInference as NewRandomizationInference
+from stats_utils.quasi_experiments.interrupted_time_series import InterruptedTimeSeries as NewInterruptedTimeSeries
+
+
+def test_legacy_and_new_imports_resolve_to_same_objects():
+    assert LegacyConversionExperiment is NewConversionExperiment
+    assert legacy_compute_mme is new_compute_mme
+    assert LegacySimulateABTest is NewSimulateABTest
+    assert LegacyRandomizationInference is NewRandomizationInference
+    assert LegacyInterruptedTimeSeries is NewInterruptedTimeSeries

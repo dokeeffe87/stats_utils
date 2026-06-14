@@ -1,6 +1,66 @@
 # stats_utils
 
-A collection of statistics utilities for A/B tests and quasi-experiments.
+A collection of hand-built statistics utilities for A/B tests and quasi-experiments.
+
+This project is being modernized so it can serve both humans doing statistical analysis and agentic tools that need stable, inspectable statistical workflows.
+
+## Current capabilities
+
+- A/B test utilities for conversion-rate metrics.
+- Minimum measurable effect helpers using randomization inference.
+- Simulation helpers for A/B tests and skewed continuous metrics.
+- Randomization-inference helpers for highly skewed/non-parametric experiment metrics.
+- Interrupted time-series helpers for quasi-experiments.
+
+## Import paths
+
+New code should prefer the modern `stats_utils` namespace:
+
+```python
+from stats_utils.ab_testing.conversion_rate import ConversionExperiment
+from stats_utils.ab_testing.skewed_metrics import RandomizationInference
+from stats_utils.quasi_experiments.interrupted_time_series import InterruptedTimeSeries
+```
+
+Legacy imports remain supported for backwards compatibility:
+
+```python
+from ab_testing_utils.conversion_rate_utils import ConversionExperiment
+from ab_testing_utils.skewed_metric_utils import RandomizationInference
+from quasi_experiment_utils.interrupted_time_series_utils import InterruptedTimeSeries
+```
+
+See `docs/public-api-inventory.md` for the full legacy-to-modern mapping.
+
+## Quick smoke check
+
+```bash
+uv run python -c "from stats_utils.ab_testing.conversion_rate import ConversionExperiment; print(ConversionExperiment().calc_sample_size(power=0.8, alpha=0.05, relative_minimum_detectable_effect_size=0.1, baseline_conversion_rate=0.05))"
+```
+
+Expected output:
+
+```text
+29826
+```
+
+## Roadmap
+
+The modernization plan is tracked in `docs/phase-1-modernization-plan.md`.
+
+Planned future phases:
+
+1. **Phase 1: package modernization and compatibility**
+   - Add the `stats_utils` namespace.
+   - Preserve legacy imports.
+   - Add baseline tests and documentation.
+2. **Phase 2: statistical decision tree**
+   - Recommend statistical methods from structured problem descriptions.
+   - Return assumptions, diagnostics, alternatives, caveats, and reporting guidance.
+3. **Phase 3+: causal workflow tools**
+   - Make causal assumptions explicit with DAGs.
+   - Identify estimands and adjustment sets.
+   - Add estimator/refutation/reporting workflows with strong communication of limitations.
 
 ## Setup with uv
 
@@ -20,10 +80,10 @@ To run Python inside the environment:
 uv run python
 ```
 
-Quick smoke check:
+## Tests
 
 ```bash
-uv run python -c "from ab_testing_utils.conversion_rate_utils import ConversionExperiment; print(ConversionExperiment().calc_sample_size(power=0.8, alpha=0.05, relative_minimum_detectable_effect_size=0.1, baseline_conversion_rate=0.05))"
+uv run pytest
 ```
 
 ## Notebooks

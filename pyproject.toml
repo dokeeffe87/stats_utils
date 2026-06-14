@@ -38,6 +38,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "stats_utils",
   "ab_testing_utils",
   "quasi_experiment_utils",
 ]
